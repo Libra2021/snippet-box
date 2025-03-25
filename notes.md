@@ -3632,3 +3632,123 @@ Internal Server Error
 ### Key Takeaways
 
 - Use `bytes.Buffer` to capture template output and handle errors.
+
+
+## 5.5 Common dynamic data
+
+There may be common dynamic data that you want to include on more than one webpage. For example:
+- the name and profile picture of the current user
+- a CSRF token in all pages with forms
+
+Say that we want to include the current year in the footer on every page.
+
+**Implementation**
+
+**File: `cmd/web/templates.go`**
+
+```go
+package main
+
+...
+
+// Add a CurrentYear field to the templateData struct.
+type templateData struct {
+    CurrentYear int
+    Snippet     models.Snippet
+    Snippets    []models.Snippet
+}
+
+...
+```
+
+**File: `cmd/web/helpers.go`**
+
+```go
+package main
+
+import (
+    "bytes"
+    "fmt"
+    "net/http"
+    "time" // New import
+)
+
+...
+
+// Create an newTemplateData() helper, which returns a templateData struct 
+// initialized with the current year. Note that we're not using the *http.Request 
+// parameter here at the moment, but we will do later in the book.
+func (app *application) newTemplateData(r *http.Request) templateData {
+    return templateData{
+        CurrentYear: time.Now().Year(),
+    }
+}
+
+...
+```
+
+**File: `cmd/web/handlers.go`**
+
+```go
+package main
+
+...
+
+func (app *application) home(w http.ResponseWriter, r *http.Request) {
+    w.Header().Add("Server", "Go")
+    
+    snippets, err := app.snippets.Latest()
+    if err != nil {
+        app.serverError(w, r, err)
+        return
+    }
+
+    // Call the newTemplateData() helper to get a templateData struct containing
+    // the 'default' data (which for now is just the current year), and add the
+    // snippets slice to it.
+    data := app.newTemplateData(r)
+    data.Snippets = snippets
+
+    // Pass the data to the render() helper as normal.
+    app.render(w, r, http.StatusOK, "home.tmpl", data)
+}
+
+func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
+    id, err := strconv.Atoi(r.PathValue("id"))
+    if err != nil || id < 1 {
+        http.NotFound(w, r)
+        return
+    }
+
+    snippet, err := app.snippets.Get(id)
+    if err != nil {
+        if errors.Is(err, models.ErrNoRecord) {
+            http.NotFound(w, r)
+        } else {
+            app.serverError(w, r, err)
+        }
+        return
+    }
+
+    // And do the same thing again here...
+    data := app.newTemplateData(r)
+    data.Snippet = snippet
+
+    app.render(w, r, http.StatusOK, "view.tmpl", data)
+}
+
+...
+```
+
+**File: `ui/html/base.tmpl`**
+
+```html
+...
+
+<footer>
+    <!-- Update the footer to include the current year -->
+    Powered by <a href='https://golang.org/'>Go</a> in {{.CurrentYear}}
+</footer>
+
+...
+```
