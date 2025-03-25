@@ -3752,3 +3752,131 @@ func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
 
 ...
 ```
+
+## 5.6 Custom template functions
+
+Let’s create a custom `humanDate()` function which outputs datetimes in a nice ‘humanized’ format.
+
+1. **Implementation**
+
+**File: `cmd/web/templates.go`**
+
+```go
+package main
+
+import (
+    "html/template"
+    "path/filepath"
+    "time" // New import
+
+    "snippetbox.alexedwards.net/internal/models"
+)
+
+...
+
+// Create a humanDate function which returns a nicely formatted string
+// representation of a time.Time object.
+func humanDate(t time.Time) string {
+    return t.Format("02 Jan 2006 at 15:04")
+}
+
+// Initialize a template.FuncMap object and store it in a global variable. This is
+// essentially a string-keyed map which acts as a lookup between the names of our
+// custom template functions and the functions themselves.
+var functions = template.FuncMap{
+    "humanDate": humanDate,
+}
+
+func newTemplateCache() (map[string]*template.Template, error) {
+    cache := map[string]*template.Template{}
+
+    pages, err := filepath.Glob("./ui/html/pages/*.tmpl")
+    if err != nil {
+        return nil, err
+    }
+
+    for _, page := range pages {
+        name := filepath.Base(page)
+
+        // The template.FuncMap must be registered with the template set before you
+        // call the ParseFiles() method. This means we have to use template.New() to
+        // create an empty template set, use the Funcs() method to register the
+        // template.FuncMap, and then parse the file as normal.
+        ts, err := template.New(name).Funcs(functions).ParseFiles("./ui/html/base.tmpl")
+        if err != nil {
+            return nil, err
+        }
+
+        ts, err = ts.ParseGlob("./ui/html/partials/*.tmpl")
+        if err != nil {
+            return nil, err
+        }
+
+        ts, err = ts.ParseFiles(page)
+        if err != nil {
+            return nil, err
+        }
+
+        cache[name] = ts
+    }
+
+    return cache, nil
+}
+```
+
+**File: `ui/html/pages/home.tmpl`**
+
+```html
+...
+
+<td>{{humanDate .Created}}</td>
+
+...
+```
+
+
+**File: `ui/html/pages/view.tmpl`**
+
+```html
+...
+
+<time>Created: {{.Created | humanDate}}</time>
+<time>Expires: {{.Expires | humanDate}}</time>
+
+...
+```
+
+**Key Points**
+
+- `template.FuncMap`: A map of functions that can be used in templates.
+- `template.Funcs()`: Register the `template.FuncMap` with the template set.
+  - It must be called before the template is parsed.
+
+- Custom template functions (like our `humanDate()` function) can accept as many parameters as they need to, but they must return one value only. The only exception to this is if you want to return an error as the second value.
+
+2. **Pipeline**
+
+- Use the `|` character to pipeline values to a function.
+
+  ```html
+  <time>Created: {{humanDate .Created}}</time>
+  ```
+
+  is equivalent to:
+
+  ```html
+  <time>Created: {{.Created | humanDate}}</time>
+  ```
+
+- You can make an arbitrarily long chain of template functions. For example:
+  ```html
+  <time>{{.Created | humanDate | printf "Created: %s"}}</time>
+  ```
+
+### Key Takeaways
+
+- Use `template.FuncMap` to register custom template functions.
+- Use the `template.Funcs()` method to register the `template.FuncMap` with the template set.
+- `template.Funcs()` must be called before the template is parsed.
+- Custom template functions can accept as many parameters as they need to, but they must return one value only. The only exception to this is if you want to return an error as the second value.
+- Use the `|` character to pipeline values to a function in a template.
