@@ -3495,3 +3495,140 @@ func newTemplateCache() (map[string]*template.Template, error) {
   - Store cache in app struct for easy handler access.
 - Centralize rendering with a helper method to reduce duplication.
 - Automatically include partials using `ParseGlob()`.
+
+## 5.4 Catching runtime errors
+
+1. **Problem**
+
+Let’s add a deliberate error to our template.
+
+**File: `ui/html/pages/view.tmpl`**
+
+```html
+{{define "title"}}Snippet #{{.Snippet.ID}}{{end}}
+
+{{define "main"}}
+    {{with .Snippet}}
+    <div class='snippet'>
+        <div class='metadata'>
+            <strong>{{.Title}}</strong>
+            <span>#{{.ID}}</span>
+        </div>
+        {{len nil}} <!-- Deliberate error -->
+        <pre><code>{{.Content}}</code></pre>
+        <div class='metadata'>
+            <time>Created: {{.Created}}</time>
+            <time>Expires: {{.Expires}}</time>
+        </div>
+    </div>
+    {{end}}
+{{end}}
+```
+
+Result:
+
+```bash
+$ curl -i http://localhost:4000/snippet/view/1
+HTTP/1.1 200 OK
+Date: Wed, 18 Mar 2024 11:29:23 GMT
+Content-Length: 734
+Content-Type: text/html; charset=utf-8
+
+
+<!doctype html>
+<html lang='en'>
+    <head>
+        <meta charset='utf-8'>
+        <title>Snippet #1 - Snippetbox</title>
+        <link rel='stylesheet' href='/static/css/main.css'>
+        <link rel='shortcut icon' href='/static/img/favicon.ico' type='image/x-icon'>
+        <link rel='stylesheet' href='https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700'>
+    </head>
+    <body>
+        <header>
+            <h1><a href='/'>Snippetbox</a></h1>
+        </header>
+        
+ <nav>
+    <a href='/'>Home</a>
+</nav>
+
+        <main>
+            
+    
+    <div class='snippet'>
+        <div class='metadata'>
+            <strong>An old silent pond</strong>
+            <span>#1</span>
+        </div>
+        Internal Server Error
+```
+
+- Our application has thrown an error, but the user has wrongly been sent a `200 OK` response. And even worse, they’ve received a half-complete HTML page.
+
+2. **Solution**
+
+We make a ‘trial’ render by writing the template into a buffer.
+- If this fails, we can respond to the user with an error message.
+- If it works, we can then write the contents of the buffer to our `http.ResponseWriter`.
+
+**File: `cmd/web/helpers.go`**
+
+```go
+package main
+
+import (
+    "bytes" // New import
+    "fmt"
+    "net/http"
+)
+
+...
+
+func (app *application) render(w http.ResponseWriter, r *http.Request, status int, page string, data templateData) {
+    ts, ok := app.templateCache[page]
+    if !ok {
+        err := fmt.Errorf("the template %s does not exist", page)
+        app.serverError(w, r, err)
+        return
+    }
+
+    // Initialize a new buffer.
+    buf := new(bytes.Buffer)
+
+    // Write the template to the buffer, instead of straight to the
+    // http.ResponseWriter. If there's an error, call our serverError() helper
+    // and then return.
+    err := ts.ExecuteTemplate(buf, "base", data)
+    if err != nil {
+        app.serverError(w, r, err)
+        return
+    }
+
+    // If the template is written to the buffer without any errors, we are safe
+    // to go ahead and write the HTTP status code to http.ResponseWriter.
+    w.WriteHeader(status)
+
+    // Write the contents of the buffer to the http.ResponseWriter. Note: this
+    // is another time where we pass our http.ResponseWriter to a function that
+    // takes an io.Writer.
+    buf.WriteTo(w)
+}
+```
+
+Result:
+
+```bash
+$ curl -i http://localhost:4000/snippet/view/1
+HTTP/1.1 500 Internal Server Error
+Content-Type: text/plain; charset=utf-8
+X-Content-Type-Options: nosniff
+Date: Wed, 18 Mar 2024 11:29:23 GMT
+Content-Length: 22
+
+Internal Server Error
+```
+
+### Key Takeaways
+
+- Use `bytes.Buffer` to capture template output and handle errors.
