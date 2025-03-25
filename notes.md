@@ -3213,3 +3213,285 @@ func (app *application) home(w http.ResponseWriter, r *http.Request) {
 - Combine functions with parentheses.
 - Control loops with `break` and `continue`.
 - Variables can be declared with `$var := value`.
+
+## 5.3 Caching templates
+
+1. **Optimization Goals**
+- Avoid repeatedly parsing template files by implementing an in-memory cache.
+- Reduce code duplication in handlers with a helper function.
+
+2. **Template Cache Implementation**
+
+**File: `cmd/web/templates.go`**
+
+```go
+package main
+
+import (
+    "html/template" // New import
+    "path/filepath" // New import
+
+    "snippetbox.libra.dev/internal/models"
+)
+
+...
+
+func newTemplateCache() (map[string]*template.Template, error) {
+    // Initialize a new map to act as the cache.
+    cache := map[string]*template.Template{}
+
+    // Use the filepath.Glob() function to get a slice of all filepaths that
+    // match the pattern "./ui/html/pages/*.tmpl". This will essentially gives
+    // us a slice of all the filepaths for our application 'page' templates
+    // like: [ui/html/pages/home.tmpl ui/html/pages/view.tmpl]
+    pages, err := filepath.Glob("./ui/html/pages/*.tmpl")
+    if err != nil {
+        return nil, err
+    }
+
+    // Loop through the page filepaths one-by-one.
+    for _, page := range pages {
+        // Extract the file name (like 'home.tmpl') from the full filepath
+        // and assign it to the name variable.
+        name := filepath.Base(page)
+
+        // Create a slice containing the filepaths for our base template, any
+        // partials and the page.
+        files := []string{
+            "./ui/html/base.tmpl",
+            "./ui/html/partials/nav.tmpl",
+            page,
+        }
+
+        // Parse the files into a template set.
+        ts, err := template.ParseFiles(files...)
+        if err != nil {
+            return nil, err
+        }
+
+        // Add the template set to the map, using the name of the page
+        // (like 'home.tmpl') as the key.
+        cache[name] = ts
+    }
+
+    // Return the map.
+    return cache, nil
+}
+```
+
+**Note**:
+- `filepath.Glob()` returns a slice of strings representing all file paths that match the pattern.
+- `filepath.Base()` returns the last element of the path.
+
+**File: `cmd/web/main.go`**
+
+```go
+package main
+
+import (
+    "database/sql"
+    "flag"
+    "html/template" // New import
+    "log/slog"
+    "net/http"
+    "os"
+
+    "snippetbox.alexedwards.net/internal/models"
+
+    _ "github.com/jackc/pgx/v5/stdlib"
+)
+
+// Add a templateCache field to the application struct.
+type application struct {
+    logger        *slog.Logger
+    snippets      *models.SnippetModel
+    templateCache map[string]*template.Template
+}
+
+func main() {
+    addr := flag.String("addr", ":4000", "HTTP network address")
+    dsn := flag.String("dsn", "web:pass@/snippetbox?parseTime=true", "MySQL data source name")
+    flag.Parse()
+
+    logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+    db, err := openDB(*dsn)
+    if err != nil {
+        logger.Error(err.Error())
+        os.Exit(1)
+    }
+    defer db.Close()
+
+    // Initialize a new template cache...
+    templateCache, err := newTemplateCache()
+    if err != nil {
+        logger.Error(err.Error())
+        os.Exit(1)
+    }
+
+    // And add it to the application dependencies.
+    app := &application{
+        logger:        logger,
+        snippets:      &models.SnippetModel{DB: db},
+        templateCache: templateCache,
+    }
+
+    logger.Info("starting server", "addr", *addr)
+
+    err = http.ListenAndServe(*addr, app.routes())
+    logger.Error(err.Error())
+    os.Exit(1)
+}
+
+...
+```
+
+3. **Render Helper Function Implementation**
+
+**File: `cmd/web/helpers.go`**
+
+```go
+package main
+
+import (
+    "fmt" // New import
+    "net/http"
+)
+
+...
+
+func (app *application) render(w http.ResponseWriter, r *http.Request, status int, page string, data templateData) {
+    // Retrieve the appropriate template set from the cache based on the page
+    // name (like 'home.tmpl'). If no entry exists in the cache with the
+    // provided name, then create a new error and call the serverError() helper
+    // method that we made earlier and return.
+    ts, ok := app.templateCache[page]
+    if !ok {
+        err := fmt.Errorf("the template %s does not exist", page)
+        app.serverError(w, r, err)
+        return
+    }
+
+    // Write out the provided HTTP status code ('200 OK', '400 Bad Request' etc).
+    w.WriteHeader(status)
+
+    // Execute the template set and write the response body. Again, if there
+    // is any error we call the serverError() helper.
+    err := ts.ExecuteTemplate(w, "base", data)
+    if err != nil {
+        app.serverError(w, r, err)
+    }
+}
+```
+
+**File: `cmd/web/handlers.go`**
+
+```go
+package main
+
+import (
+    "errors"
+    "fmt"
+    "net/http"
+    "strconv"
+
+    "snippetbox.alexedwards.net/internal/models"
+)
+
+func (app *application) home(w http.ResponseWriter, r *http.Request) {
+    w.Header().Add("Server", "Go")
+    
+    snippets, err := app.snippets.Latest()
+    if err != nil {
+        app.serverError(w, r, err)
+        return
+    }
+
+    // Use the new render helper.
+    app.render(w, r, http.StatusOK, "home.tmpl", templateData{
+        Snippets: snippets,
+    })
+}
+
+func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
+    id, err := strconv.Atoi(r.PathValue("id"))
+    if err != nil || id < 1 {
+        http.NotFound(w, r)
+        return
+    }
+
+    snippet, err := app.snippets.Get(id)
+    if err != nil {
+        if errors.Is(err, models.ErrNoRecord) {
+            http.NotFound(w, r)
+        } else {
+            app.serverError(w, r, err)
+        }
+        return
+    }
+
+    // Use the new render helper.
+    app.render(w, r, http.StatusOK, "view.tmpl", templateData{
+        Snippet: snippet,
+    })
+}
+
+...
+```
+
+4. **Improve Partial Parsing**
+
+**File: `cmd/web/templates.go`**
+
+```go
+package main
+
+...
+
+func newTemplateCache() (map[string]*template.Template, error) {
+    cache := map[string]*template.Template{}
+
+    pages, err := filepath.Glob("./ui/html/pages/*.tmpl")
+    if err != nil {
+        return nil, err
+    }
+
+    for _, page := range pages {
+        name := filepath.Base(page)
+
+        // Parse the base template file into a template set.
+        ts, err := template.ParseFiles("./ui/html/base.tmpl")
+        if err != nil {
+            return nil, err
+        }
+
+        // Call ParseGlob() *on this template set* to add any partials.
+        ts, err = ts.ParseGlob("./ui/html/partials/*.tmpl")
+        if err != nil {
+            return nil, err
+        }
+
+        // Call ParseFiles() *on this template set* to add the  page template.
+        ts, err = ts.ParseFiles(page)
+        if err != nil {
+            return nil, err
+        }
+
+        // Add the template set to the map as normal...
+        cache[name] = ts
+    }
+
+    return cache, nil
+}
+```
+
+**Note**:
+- `template.ParseGlob()` parses all files in a directory that match the pattern.
+- `ParseGlob()` and `ParseFiles()` can be called multiple times on the same template set.
+
+### Key Takeaways
+
+- Cache templates at startup to avoid repeated parsing.
+  - Store cache in app struct for easy handler access.
+- Centralize rendering with a helper method to reduce duplication.
+- Automatically include partials using `ParseGlob()`.
