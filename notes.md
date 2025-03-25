@@ -2398,7 +2398,7 @@ import (
     "net/http"
     "strconv"
 
-    "snippetbox.alexedwards.net/internal/models" // New import
+    "snippetbox.libra.dev/internal/models" // New import
 )
 
 ...
@@ -2583,7 +2583,7 @@ import (
     "net/http"
     "strconv"
 
-    "snippetbox.alexedwards.net/internal/models"
+    "snippetbox.libra.dev/internal/models"
 )
 
 func (app *application) home(w http.ResponseWriter, r *http.Request) {
@@ -2878,3 +2878,338 @@ stmt := `SELECT id, title, content, created, expires FROM snippets
     - The `sql.Stmt` object remembers which connection in the pool was used.
   - Under heavy load, statements may be re-prepared on different connections, reducing performance gains.
   - Complexity increases, so use prepared statements only when performance benefits are significant.
+
+# Chapter 5: Dynamic HTML templates
+
+## 5.1 Displaying dynamic data
+
+1. **Updating snippetView handler**
+
+**File: `cmd/web/templates.go`**
+
+```go
+package main
+
+import "snippetbox.libra.dev/internal/models"
+
+// Define a templateData type to act as the holding structure for
+// any dynamic data that we want to pass to our HTML templates.
+// At the moment it only contains one field, but we'll add more
+// to it as the build progresses.
+type templateData struct {
+    Snippet models.Snippet
+}
+```
+
+**File: `cmd/web/handlers.go`**
+
+```go
+package main
+
+...
+
+func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
+    id, err := strconv.Atoi(r.PathValue("id"))
+    if err != nil || id < 1 {
+        http.NotFound(w, r)
+        return
+    }
+
+    snippet, err := app.snippets.Get(id)
+    if err != nil {
+        if errors.Is(err, models.ErrNoRecord) {
+            http.NotFound(w, r)
+        } else {
+            app.serverError(w, r, err)
+        }
+        return
+    }
+
+    // Initialize a slice containing the paths to the view.tmpl file,
+    // plus the base layout and navigation partial that we made earlier.
+    files := []string{
+        "./ui/html/base.tmpl",
+        "./ui/html/partials/nav.tmpl",
+        "./ui/html/pages/view.tmpl",
+    }
+
+    // Parse the template files...
+    ts, err := template.ParseFiles(files...)
+    if err != nil {
+        app.serverError(w, r, err)
+        return
+    }
+
+    // Create an instance of a templateData struct holding the snippet data.
+    data := templateData{
+        Snippet: snippet,
+    }
+
+    // Pass in the templateData struct when executing the template.
+    err = ts.ExecuteTemplate(w, "base", data)
+    if err != nil {
+        app.serverError(w, r, err)
+    }
+}
+
+...
+```
+
+2. **Creating view template**
+
+**File: `ui/html/pages/view.tmpl`**
+
+```html
+{{define "title"}}Snippet #{{.Snippet.ID}}{{end}} {{define "main"}}
+<div class="snippet">
+  <div class="metadata">
+    <strong>{{.Snippet.Title}}</strong>
+    <span>#{{.Snippet.ID}}</span>
+  </div>
+  <pre><code>{{.Snippet.Content}}</code></pre>
+  <div class="metadata">
+    <time>Created: {{.Snippet.Created}}</time>
+    <time>Expires: {{.Snippet.Expires}}</time>
+  </div>
+</div>
+{{end}}
+```
+
+**Key Points**:
+
+- Any data that you pass as the final parameter to `ts.ExecuteTemplate()` is represented within your HTML templates by the `.` character (referred to as dot).
+
+- `html/template` package allows you to pass in only one item of dynamic data when rendering a template.
+  - **Solution**: Create `templateData` struct to hold multiple dynamic data items.
+
+3. **Key Features of `html/template`**
+
+- **Dynamic content escaping**:
+
+  - Automatically escapes any data that is yielded between `{{ }}` tags.
+  - Prevents XSS attacks by escaping dynamic content.
+  - Context-aware escaping for HTML, CSS, JS, and URIs.
+  - Example:
+    ```html
+    <span>{{"<script>alert('xss attack')</script>"}}</span>
+    ```
+    It would be rendered harmlessly as:
+    ```html
+    <span>&lt;script&gt;alert(&#39;xss attack&#39;)&lt;/script&gt;</span>
+    ```
+
+- **Nested templates**:
+
+  - Must explicitly pass dot when invoking one template from another template:
+    ```html
+    {{template "main" .}}
+    {{block "sidebar" .}}{{end}}
+    ```
+
+- **Method calling**:
+
+  - Can call methods on exported types:
+    `{{.Snippet.Created.Weekday}}`
+  - Pass parameters with spaces (no parentheses):
+    `{{.Snippet.Created.AddDate 0 6 0}}`
+
+- **HTML comments**:
+  - All HTML comments are stripped for security, including conditional comments.
+
+**NOTE**:
+
+PostgreSQL vs. MySQL: `\n` Behavior:
+
+| Behavior                 | PostgreSQL                        | MySQL                                             |
+|--------------------------|-----------------------------------|---------------------------------------------------|
+| **Default Parsing**      | **Treats `\n` as literal text**.  | **Parses `\n` as a line break**.                  |
+| **Store Actual Newline** | Use `E''` prefix (e.g., `E'\n'`). | Default behavior.                                 |
+| **Store Literal `\n`**   | Default behavior.                 | Escape as `\\n` or enable `NO_BACKSLASH_ESCAPES`. |
+| **Example**              | `'Line1\nLine2'` → Stores `\n`.   | `'Line1\nLine2'` → Stores newline.                |
+
+### Key Takeaways
+
+- Use `html/template` for automatic XSS protection.
+- Can only pass single data item to templates (use wrapper structs for multiple items).
+- Access struct fields with dot notation (`{{.Field}}`).
+- Always pipeline dot (`{{template "name" .}}`) when invoking nested templates.
+- `html/template` automatically escapes any data that is yielded between `{{ }}` tags.
+- HTML comments are removed from templates.
+- Can call methods on template variables with proper syntax.
+
+## 5.2 Template actions and functions
+
+1. **Actions**
+
+| Action | Description |
+|--------|-------------|
+| `{{if .Foo}} C1 {{else}} C2 {{end}}`    | Renders C1 if `.Foo` not empty, else C2 |
+| `{{with .Foo}} C1 {{else}} C2 {{end}}`  | Sets dot to `.Foo` and renders C1 if not empty, else C2 |
+| `{{range .Foo}} C1 {{else}} C2 {{end}}` | Loops over `.Foo` (array/slice/map/channel), renders C1 for each element, else C2 |
+
+**Note**
+- `{{else}}` clause is optional.
+- Empty values: `false`, `0`, `nil`, zero-length collections.
+- `with` and `range` change the value of dot.
+
+2. **Functions**
+
+| Function | Description |
+|----------|-------------|
+| `{{eq .Foo .Bar}}`             | True if `.Foo` equals `.Bar` |
+| `{{ne .Foo .Bar}}`             | True if `.Foo` not equal `.Bar` |
+| `{{not .Foo}}`                 | Boolean negation of `.Foo` |
+| `{{or .Foo .Bar}}`             | Yields `.Foo` if not empty, else `.Bar` |
+| `{{index .Foo i}}`             | Value of `.Foo` at index `i` (map/slice/array) |
+| `{{printf "%s-%s" .Foo .Bar}}` | Formatted string (like `fmt.Sprintf`) |
+| `{{len .Foo}}`                 | Length of `.Foo` as integer |
+| `{{$bar := len .Foo}}`         | Assign length to _template variable_ `$bar` |
+
+**Note**
+
+- **Combining functions**:
+  `{{if (gt (len .Foo) 99)}} C1 {{end}}`
+  `{{if (and (eq .Foo 1) (le .Bar 20))}} C1 {{end}}`
+
+- **Loop control**:
+
+  Control loops with `break` and `continue`.
+
+  ```html
+  {{range .Foo}}
+    // Skip this iteration if the .ID value equals 99.
+    {{if eq .ID 99}}
+        {{continue}}
+    {{end}}
+    // ...
+  {{end}}
+  ```
+  ```html
+  {{range .Foo}}
+    // End the loop if the .ID value equals 99.
+    {{if eq .ID 99}}
+        {{break}}
+    {{end}}
+    // ...
+  {{end}}
+  ```
+
+3. **Implementation**
+
+**File: `ui/html/pages/view.tmpl`**
+
+```html
+{{define "title"}}Snippet #{{.Snippet.ID}}{{end}}
+
+{{define "main"}}
+    {{with .Snippet}}
+    <div class='snippet'>
+        <div class='metadata'>
+            <strong>{{.Title}}</strong>
+            <span>#{{.ID}}</span>
+        </div>
+        <pre><code>{{.Content}}</code></pre>
+        <div class='metadata'>
+            <time>Created: {{.Created}}</time>
+            <time>Expires: {{.Expires}}</time>
+        </div>
+    </div>
+    {{end}}
+{{end}}
+```
+
+**File: `cmd/web/templates.go`**
+
+```go
+package main
+
+import "snippetbox.libra.dev/internal/models"
+
+// Include a Snippets field in the templateData struct.
+type templateData struct {
+    Snippet  models.Snippet
+    Snippets []models.Snippet
+}
+```
+
+**File: `cmd/web/handlers.go`**
+
+```go
+package main
+
+...
+
+func (app *application) home(w http.ResponseWriter, r *http.Request) {
+    w.Header().Add("Server", "Go")
+    
+    snippets, err := app.snippets.Latest()
+    if err != nil {
+        app.serverError(w, r, err)
+        return
+    }
+
+    files := []string{
+        "./ui/html/base.tmpl",
+        "./ui/html/partials/nav.tmpl",
+        "./ui/html/pages/home.tmpl",
+    }
+
+    ts, err := template.ParseFiles(files...)
+    if err != nil {
+        app.serverError(w, r, err)
+        return
+    }
+
+    // Create an instance of a templateData struct holding the slice of
+    // snippets.
+    data := templateData{
+        Snippets: snippets,
+    }
+
+    // Pass in the templateData struct when executing the template.
+    err = ts.ExecuteTemplate(w, "base", data)
+    if err != nil {
+        app.serverError(w, r, err)
+    }
+}
+
+...
+```
+
+**File: `ui/html/pages/home.tmpl`**
+
+```html
+{{define "title"}}Home{{end}}
+
+{{define "main"}}
+    <h2>Latest Snippets</h2>
+    {{if .Snippets}}
+     <table>
+        <tr>
+            <th>Title</th>
+            <th>Created</th>
+            <th>ID</th>
+        </tr>
+        {{range .Snippets}}
+        <tr>
+            <td><a href='/snippet/view/{{.ID}}'>{{.Title}}</a></td>
+            <td>{{.Created}}</td>
+            <td>#{{.ID}}</td>
+        </tr>
+        {{end}}
+    </table>
+    {{else}}
+        <p>There's nothing to see here... yet!</p>
+    {{end}}
+{{end}}
+```
+
+### Key Takeaways
+
+- Use `if` for conditional rendering.
+- `with` changes dot context for its block.
+- `range` iterates over slices/arrays/maps.
+- Template functions enable complex logic.
+- Combine functions with parentheses.
+- Control loops with `break` and `continue`.
+- Variables can be declared with `$var := value`.
