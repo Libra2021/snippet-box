@@ -3880,3 +3880,190 @@ func newTemplateCache() (map[string]*template.Template, error) {
 - `template.Funcs()` must be called before the template is parsed.
 - Custom template functions can accept as many parameters as they need to, but they must return one value only. The only exception to this is if you want to return an error as the second value.
 - Use the `|` character to pipeline values to a function in a template.
+
+# Chapter 6: Middleware
+
+## 6.1 How middleware works
+
+1. **Core Concepts**
+
+- Middleware sits between the server and handlers in the request chain.
+- Each middleware calls `next.ServeHTTP()` to continue the chain.
+- Two common implementation patterns:
+  ```go
+  // Closure pattern
+  func myMiddleware(next http.Handler) http.Handler {
+      fn := func(w http.ResponseWriter, r *http.Request) {
+          // Middleware logic
+          next.ServeHTTP(w, r)
+      }
+      return http.HandlerFunc(fn)
+  }
+  ```
+
+  ```go
+  // Anonymous function pattern
+  func myMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          // Middleware logic
+          next.ServeHTTP(w, r)
+      })
+  }
+  ```
+
+2. **Positioning Matters**
+
+- **Before servemux**: Runs on all requests (e.g., logging).
+  ```plaintext
+  myMiddleware -> servemux -> handler
+  ```
+- **After servemux**: Runs on specific routes (e.g., auth).
+  ```plaintext
+  servemux -> myMiddleware -> handler
+  ```
+
+### Key Takeaways
+
+- **Chain Structure**: Middleware creates a handler chain where each link can process requests/responses.
+- **Flexible Placement**: Position determines scope (global vs route-specific).
+- **Explicit Control**: Must call `next.ServeHTTP()` to continue chain.
+- **Common Uses**
+  - Request logging
+  - Authentication/authorization
+  - Error handling
+  - Headers manipulation
+- **Performance**: Keep middleware lightweight since it runs on every request.
+
+##  6.2 Setting common headers
+
+1. **Security Headers Overview**
+
+- **Content-Security-Policy**: Restricts resource loading sources.
+- **Referrer-Policy**: Controls referrer header information.
+- **X-Content-Type-Options**: Prevents MIME-type sniffing.
+- **X-Frame-Options**: Prevents clickjacking attacks.
+- **X-XSS-Protection**: Disables legacy XSS protection (when using CSP).
+
+2. **Implementation**
+
+**File: `cmd/web/middleware.go`**
+
+```go
+package main
+
+import (
+    "net/http"
+)
+
+func commonHeaders(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Note: This is split across multiple lines for readability. You don't 
+        // need to do this in your own code.
+        w.Header().Set("Content-Security-Policy",
+            "default-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com")
+
+        w.Header().Set("Referrer-Policy", "origin-when-cross-origin")
+        w.Header().Set("X-Content-Type-Options", "nosniff")
+        w.Header().Set("X-Frame-Options", "deny")
+        w.Header().Set("X-XSS-Protection", "0")
+
+        w.Header().Set("Server", "Go")
+
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+**File: `cmd/web/routes.go`**
+```go
+package main
+
+import "net/http"
+
+// Update the signature for the routes() method so that it returns a
+// http.Handler instead of *http.ServeMux.
+func (app *application) routes() http.Handler {
+    mux := http.NewServeMux()
+
+    fileServer := http.FileServer(http.Dir("./ui/static/"))
+    mux.Handle("GET /static/", http.StripPrefix("/static", fileServer))
+    
+    mux.HandleFunc("GET /{$}", app.home)
+    mux.HandleFunc("GET /snippet/view/{id}", app.snippetView)
+    mux.HandleFunc("GET /snippet/create", app.snippetCreate)
+    mux.HandleFunc("POST /snippet/create", app.snippetCreatePost)
+
+    // Pass the servemux as the 'next' parameter to the commonHeaders middleware.
+    // Because commonHeaders is just a function, and the function returns a
+    // http.Handler we don't need to do anything else.
+    return commonHeaders(mux)
+}
+```
+
+**File: `cmd/web/handlers.go`**
+```go
+...
+
+func (app *application) home(w http.ResponseWriter, r *http.Request) {
+  // remove the w.Header().Add("Server", "Go")
+  ...
+}
+
+...
+```
+
+**Key Points**
+
+- `routes()` should return `http.Handler` instead of `*http.ServeMux`.
+- **Middleware Flow**:
+  ```plaintext
+  commonHeaders → servemux → handler → servemux → commonHeaders
+  ```
+
+3. **Flow of Control**
+
+```plaintext
+commonHeaders → servemux → handler → servemux → commonHeaders
+```
+
+```go
+func myMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Any code here will execute on the way down the chain.
+        next.ServeHTTP(w, r)
+        // Any code here will execute on the way back up the chain.
+    })
+}
+```
+
+4. **Early Returns**
+
+Can stop chain execution and control will flow back upstream (e.g., for auth failures).
+
+```go
+func myMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // If the user isn't authorized, send a 403 Forbidden status and
+        // return to stop executing the chain.
+        if !isAuthorized(r) {
+            w.WriteHeader(http.StatusForbidden)
+            return
+        }
+
+        // Otherwise, call the next handler in the chain.
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+### Key Takeaways
+- **Security Header**s provide critical protection against common web vulnerabilities.
+- **Global Middleware** should be placed before the router in the chain.
+- **Header Management**: Set headers once in middleware rather than individual handlers.
+- **Flow Control**:
+  - Middleware can modify both requests and responses.
+    ```plaintext
+    commonHeaders → servemux → handler → servemux → commonHeaders
+    ```
+  - Chain continues only when calling `next.ServeHTTP()`.
+  - Stop chain execution with early returns.
