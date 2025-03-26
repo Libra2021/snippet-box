@@ -4116,3 +4116,145 @@ return app.logRequest(commonHeaders(mux))
   logRequest ↔ commonHeaders ↔ servemux ↔ application handler
   ```
 - Implementing the middleware as a method against `application` to access the handler dependencies.
+
+## 6.4 Panic recovery
+
+1. **Problem**
+
+- Panics in handlers terminate the goroutine of current request but the main goroutine still work.
+- Default behavior provides empty response.
+  ```bash
+  $ curl -i http://localhost:4000
+  curl: (52) Empty reply from server
+  ```
+- Need graceful error handling without crashing server.
+
+2. **Implementation**
+
+**File: `cmd/web/middleware.go`**
+
+```go
+package main
+
+import (
+    "fmt" // New import
+    "net/http"
+)
+
+...
+
+func (app *application) recoverPanic(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Create a deferred function (which will always be run in the event
+        // of a panic as Go unwinds the stack).
+        defer func() {
+            // Use the builtin recover function to check if there has been a
+            // panic or not. If there has...
+            if err := recover(); err != nil {
+                // Set a "Connection: close" header on the response.
+                w.Header().Set("Connection", "close")
+                // Call the app.serverError helper method to return a 500
+                // Internal Server response.
+                app.serverError(w, r, fmt.Errorf("%s", err))
+            }
+        }()
+
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+**File: `cmd/web/routes.go`**
+
+```go
+package main
+
+import "net/http"
+
+func (app *application) routes() http.Handler {
+    mux := http.NewServeMux()
+
+    fileServer := http.FileServer(http.Dir("./ui/static/"))
+    mux.Handle("GET /static/", http.StripPrefix("/static", fileServer))
+
+    mux.HandleFunc("GET /{$}", app.home)
+    mux.HandleFunc("GET /snippet/view/{id}", app.snippetView)
+    mux.HandleFunc("GET /snippet/create", app.snippetCreate)
+    mux.HandleFunc("POST /snippet/create", app.snippetCreatePost)
+
+    // Wrap the existing chain with the recoverPanic middleware.
+    return app.recoverPanic(app.logRequest(commonHeaders(mux)))
+}
+```
+
+**Key Points**
+
+- Wrap the `recover()` inside a deferred function (which will always be run in the event of a panic as Go unwinds the stack).
+
+- `recover()` - Catches panics in current goroutine.
+  - return value: `nil` if no panic, otherwise the type that the parameter passed to `panic()` was.
+
+- `Connection: close` - Ensures clean connection termination.
+  - Acts as a trigger to make Go’s HTTP server automatically close the current connection.
+  - `HTTP/2`: Automatically strip the `Connection: Close` header and send a `GOAWAY` frame.
+
+**Result**
+
+```bash
+$ curl -i http://localhost:4000
+HTTP/1.1 500 Internal Server Error
+Connection: close
+Content-Security-Policy: default-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com
+Content-Type: text/plain; charset=utf-8
+Referrer-Policy: origin-when-cross-origin
+Server: Go
+X-Content-Type-Options: nosniff
+X-Frame-Options: deny
+X-Xss-Protection: 0
+Date: Wed, 26 Mar 2025 14:15:43 GMT
+Content-Length: 22
+
+Internal Server Error
+```
+
+3. **Panic Recovery in Background Goroutines**
+
+- Our middleware will only recover panics that happen in the same goroutine that executed the `recoverPanic()` middleware.
+- Make sure that you recover any panics from within the additional goroutines spinned up by your handlers.
+
+```go
+func (app *application) myHandler(w http.ResponseWriter, r *http.Request) {
+    ...
+
+    // Spin up a new goroutine to do some background processing.
+    go func() {
+        defer func() {
+            if err := recover(); err != nil {
+                app.logger.Error(fmt.Sprint(err))
+            }
+        }()
+
+        doSomeBackgroundProcessing()
+    }()
+
+    w.Write([]byte("OK"))
+}
+```
+
+### Key Takeaways
+
+- Panics in handlers terminate the goroutine of current request but the main goroutine still work.
+  - Default behavior without panic recovery provides empty response.
+
+- Create a deferred function in the middleware and set the `Connection: Close` header.
+  ```go
+  defer func() {
+      if err := recover(); err != nil {
+          w.Header().Set("Connection", "close")
+          app.serverError(w, r, fmt.Errorf("%v", err))
+      }
+  }()
+  ```
+
+- The middleware will only recover panics that happen in the same goroutine that executed the `recoverPanic()` middleware.
+  - Make sure to recover any panics from goroutines spinned up by your handlers too.
