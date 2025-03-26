@@ -3975,6 +3975,7 @@ func commonHeaders(next http.Handler) http.Handler {
 ```
 
 **File: `cmd/web/routes.go`**
+
 ```go
 package main
 
@@ -4001,6 +4002,7 @@ func (app *application) routes() http.Handler {
 ```
 
 **File: `cmd/web/handlers.go`**
+
 ```go
 ...
 
@@ -4067,3 +4069,50 @@ func myMiddleware(next http.Handler) http.Handler {
     ```
   - Chain continues only when calling `next.ServeHTTP()`.
   - Stop chain execution with early returns.
+
+
+## 6.3 Request logging
+
+**Implementation**
+
+**File: `cmd/web/middleware.go`**
+
+```go
+package main
+
+...
+
+func (app *application) logRequest(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        var (
+            ip     = r.RemoteAddr
+            proto  = r.Proto
+            method = r.Method
+            uri    = r.URL.RequestURI()
+        )
+
+        app.logger.Info("received request", "ip", ip, "proto", proto, "method", method, "uri", uri)
+
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+**File: `cmd/web/routes.go`**
+
+```go
+...
+
+// Wrap the existing chain with the logRequest middleware.
+return app.logRequest(commonHeaders(mux))
+
+...
+```
+
+**Key Points**
+
+- **Middleware Flow**:
+  ```plaintext
+  logRequest ↔ commonHeaders ↔ servemux ↔ application handler
+  ```
+- Implementing the middleware as a method against `application` to access the handler dependencies.
