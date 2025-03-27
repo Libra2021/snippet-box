@@ -4258,3 +4258,43 @@ func (app *application) myHandler(w http.ResponseWriter, r *http.Request) {
 
 - The middleware will only recover panics that happen in the same goroutine that executed the `recoverPanic()` middleware.
   - Make sure to recover any panics from goroutines spinned up by your handlers too.
+
+## 6.5 Composable middleware chains
+
+1. **Overview**
+
+Introduce the `justinas/alice` package to help us manage our middleware/handler chains.
+
+It transforms
+```go
+Middleware1(Middleware2(Middleware3(myHandler)))
+```
+to
+```go
+alice.New(Middleware1, Middleware2, Middleware3).Then(myHandler)
+```
+
+You can use it to create middleware chains that can be assigned to variables, appended to, and reused. For example:
+
+```go
+myChain := alice.New(myMiddlewareOne, myMiddlewareTwo)
+myOtherChain := myChain.Append(myMiddleware3)
+return myOtherChain.Then(myHandler)
+```
+
+2. **Implementation**
+
+**File: `cmd/web/routes.go`**
+
+```go
+...
+
+// Create a middleware chain containing our 'standard' middleware
+// which will be used for every request our application receives.
+standard := alice.New(app.recoverPanic, app.logRequest, commonHeaders)
+
+// Return the 'standard' middleware chain followed by the servemux.
+return standard.Then(mux)
+
+...
+```
