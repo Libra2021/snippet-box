@@ -4298,3 +4298,64 @@ return standard.Then(mux)
 
 ...
 ```
+
+# Chapter 7: Processing forms
+
+## 7.1 Setting up an HTML form
+
+**Implementation**
+
+**File: `ui/html/pages/create.tmpl`**
+
+```html
+{{define "title"}}Create a New Snippet{{end}}
+
+{{define "main"}}
+<form action='/snippet/create' method='POST'>
+    <div>
+        <label>Title:</label>
+        <input type='text' name='title'>
+    </div>
+    <div>
+        <label>Content:</label>
+        <textarea name='content'></textarea>
+    </div>
+    <div>
+        <label>Delete in:</label>
+        <input type='radio' name='expires' value='365' checked> One Year
+        <input type='radio' name='expires' value='7'> One Week
+        <input type='radio' name='expires' value='1'> One Day
+    </div>
+    <div>
+        <input type='submit' value='Publish snippet'>
+    </div>
+</form>
+{{end}}
+```
+
+**File: `ui/html/partials/nav.tmpl`**
+
+```go
+{{define "nav"}}
+ <nav>
+    <a href='/'>Home</a>
+    <a href='/snippet/create'>Create snippet</a>
+</nav>
+{{end}}
+```
+
+**File: `cmd/web/handlers.go`**
+
+```go
+package main
+
+...
+
+func (app *application) snippetCreate(w http.ResponseWriter, r *http.Request) {
+    data := app.newTemplateData(r)
+
+    app.render(w, r, http.StatusOK, "create.tmpl", data)
+}
+
+...
+```
