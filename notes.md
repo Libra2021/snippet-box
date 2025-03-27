@@ -4359,3 +4359,146 @@ func (app *application) snippetCreate(w http.ResponseWriter, r *http.Request) {
 
 ...
 ```
+
+## 7.2 Parsing form data
+
+1. **Implementation**
+
+**File: `cmd/web/handlers.go`**
+
+```go
+package main
+
+...
+
+func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request) {
+    // First we call r.ParseForm() which adds any data in POST request bodies
+    // to the r.PostForm map. This also works in the same way for PUT and PATCH
+    // requests. If there are any errors, we use our app.ClientError() helper to 
+    // send a 400 Bad Request response to the user.
+    err := r.ParseForm()
+    if err != nil {
+        app.clientError(w, http.StatusBadRequest)
+        return
+    }
+
+    // Use the r.PostForm.Get() method to retrieve the title and content
+    // from the r.PostForm map.
+    title := r.PostForm.Get("title")
+    content := r.PostForm.Get("content")
+
+    // The r.PostForm.Get() method always returns the form data as a *string*.
+    // However, we're expecting our expires value to be a number, and want to
+    // represent it in our Go code as an integer. So we need to manually convert
+    // the form data to an integer using strconv.Atoi(), and we send a 400 Bad
+    // Request response if the conversion fails.
+    expires, err := strconv.Atoi(r.PostForm.Get("expires"))
+    if err != nil {
+        app.clientError(w, http.StatusBadRequest)
+        return
+    }
+
+    id, err := app.snippets.Insert(title, content, expires)
+    if err != nil {
+        app.serverError(w, r, err)
+        return
+    }
+
+    http.Redirect(w, r, fmt.Sprintf("/snippet/view/%d", id), http.StatusSeeOther)
+}
+```
+
+**Key Points**
+
+- **`r.ParseForm()`**
+  - Reads `POST`/`PUT`/`PATCH` bodies into `r.PostForm`.
+  - Is dempotent (safe to call multiple times).
+  - Returns an error when there is no body, or it’s too large to process.
+    - Default 10MB size limit (except multipart forms).
+
+- **`r.PostForm`**
+  - Use the `r.PostForm.Get()` method to retrieve the form data.
+    - Always returns a _string_.
+    - Use `strconv.Atoi()` to convert to an integer.
+    - Only returns the first value for a specific form field.
+  - The type is `url.Values` which has the underlying type `map[string][]string`.
+
+2. **`r.PostFormValue()`**
+  - Shorthand for `r.PostForm.Get()`.
+  - Recommend avoiding `PostFormValue()` (silently ignores parse errors).
+
+3. **Multiple-value Fields**
+
+- You **can't** use `r.PostForm.Get()` with form fields which potentially send multiple values, such as a group of checkboxes.
+  ```html
+  <input type="checkbox" name="items" value="foo"> Foo
+  <input type="checkbox" name="items" value="bar"> Bar
+  <input type="checkbox" name="items" value="baz"> Baz
+  ```
+
+- Use `r.PostForm` map directly.
+  ```go
+  for i, item := range r.PostForm["items"] {
+    fmt.Fprintf(w, "%d: Item %s\n", i, item)
+  }
+  ```
+
+4. **Limiting Form Size**
+
+- Forms submitted with a `POST` method have a size limit of 10MB of data.
+  - `enctype="application/x-www-form-urlencoded"` - 10MB limit.
+  - `enctype="multipart/form-data"` - No limit.
+
+- Use `http.MaxBytesReader()` to change the limit.
+  ```go
+  r.Body = http.MaxBytesReader(w, r.Body, 4096)  // 4KB limit
+
+  err := r.ParseForm()
+  if err != nil {
+      http.Error(w, "Bad Request", http.StatusBadRequest)
+      return
+  }
+  ```
+  - If the limit is hit - `MaxBytesReader` will return an error and be surfaced by `r.ParseForm()`.
+  - If the limit is hit — `MaxBytesReader` sets a flag on `http.ResponseWriter` which instructs the server to close the underlying TCP connection.
+
+5. **Query String Parameters**
+
+- `r.URL.Query().Get()` for `GET` requests like `/foo/bar?title=value&content=value`.
+
+6. **`r.Form`**
+
+- Contains form data from `POST` request body and any query string parameters.
+  - In the event of a conflict, the request body value will take precedent over the query string parameter.
+  ```go
+  err := r.ParseForm()
+  if err != nil {
+      http.Error(w, "Bad Request", http.StatusBadRequest)
+      return
+  }
+
+  title := r.Form.Get("title")
+  ```
+
+- Can be very helpful if you want your application to be agnostic about how data values are passed to it.
+
+- It is clearer and more explicit to read data from the `POST` request body via `r.PostForm` or from query string parameters via `r.URL.Query().Get()`.
+
+### Key Takeaways
+
+- **Form Parsing**:
+  - `r.ParseForm()` reads `POST`/`PUT`/`PATCH` bodies into `r.PostForm`.
+  - Idempotent (safe to call multiple times).
+  - Default 10MB size limit (except multipart forms).
+    - Use `http.MaxBytesReader()` to change the limit.
+
+- **Data Access**:
+  - `r.PostForm.Get()` for single values (returns first value).
+  - Direct map access (`r.PostForm["items"]`) for multi-value fields.
+  - Manual type conversion for non-string data.
+
+- **Best Practices**:
+  - Use `r.PostForm` for `POST` bodies.
+  - Use `r.URL.Query().Get()` for `GET` parameters.
+  - Only use `r.Form` for agnostic data access.
+  - Avoid `PostFormValue()` (silently ignores parse errors).
