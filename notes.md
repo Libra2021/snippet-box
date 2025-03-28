@@ -4605,3 +4605,289 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
     ```
 
 - You can find a bunch of code patterns for processing and validating different types of inputs in [this blog post](https://www.alexedwards.net/blog/validation-snippets-for-go).
+
+## 7.4 Displaying errors and repopulating fields
+
+1. **Implementation**
+
+**File: `cmd/web/templates.go`**
+
+```go
+package main
+
+import (
+    "html/template"
+    "path/filepath"
+    "time"
+
+    "snippetbox.alexedwards.net/internal/models"
+)
+
+// Add a Form field with the type "any".
+type templateData struct {
+    CurrentYear int
+    Snippet     models.Snippet
+    Snippets    []models.Snippet
+    Form        any
+}
+
+...
+```
+
+**File: `cmd/web/handlers.go`**
+
+```go
+package main
+
+...
+
+// Define a snippetCreateForm struct to represent the form data and validation
+// errors for the form fields. Note that all the struct fields are deliberately
+// exported (i.e. start with a capital letter). This is because struct fields
+// must be exported in order to be read by the html/template package when
+// rendering the template.
+type snippetCreateForm struct {
+    Title       string
+    Content     string
+    Expires     int
+    FieldErrors map[string]string
+}
+
+func (app *application) snippetCreate(w http.ResponseWriter, r *http.Request) {
+    data := app.newTemplateData(r)
+
+    // Initialize a new snippetCreateForm instance and pass it to the template.
+    // Notice how this is also a great opportunity to set any default or
+    // 'initial' values for the form --- here we set the initial value for the 
+    // snippet expiry to 365 days.
+    data.Form = snippetCreateForm{
+        Expires: 365,
+    }
+
+    app.render(w, r, http.StatusOK, "create.tmpl", data)
+}
+
+func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request) {
+    err := r.ParseForm()
+    if err != nil {
+        app.clientError(w, http.StatusBadRequest)
+        return
+    }
+
+    // Get the expires value from the form as normal.
+    expires, err := strconv.Atoi(r.PostForm.Get("expires"))
+    if err != nil {
+        app.clientError(w, http.StatusBadRequest)
+        return
+    }
+
+    // Create an instance of the snippetCreateForm struct containing the values
+    // from the form and an empty map for any validation errors.
+    form := snippetCreateForm{
+        Title:       r.PostForm.Get("title"),
+        Content:     r.PostForm.Get("content"),
+        Expires:     expires,
+        FieldErrors: map[string]string{},
+    }
+
+    // Update the validation checks so that they operate on the snippetCreateForm
+    // instance.
+    if strings.TrimSpace(form.Title) == "" {
+        form.FieldErrors["title"] = "This field cannot be blank"
+    } else if utf8.RuneCountInString(form.Title) > 100 {
+        form.FieldErrors["title"] = "This field cannot be more than 100 characters long"
+    }
+
+    if strings.TrimSpace(form.Content) == "" {
+        form.FieldErrors["content"] = "This field cannot be blank"
+    }
+
+    if form.Expires != 1 && form.Expires != 7 && form.Expires != 365 {
+        form.FieldErrors["expires"] = "This field must equal 1, 7 or 365"
+    }
+
+    // If there are any validation errors, then re-display the create.tmpl template,
+    // passing in the snippetCreateForm instance as dynamic data in the Form 
+    // field. Note that we use the HTTP status code 422 Unprocessable Entity 
+    // when sending the response to indicate that there was a validation error.
+    if len(form.FieldErrors) > 0 {
+        data := app.newTemplateData(r)
+        data.Form = form
+        app.render(w, r, http.StatusUnprocessableEntity, "create.tmpl", data)
+        return
+    }
+
+    // We also need to update this line to pass the data from the
+    // snippetCreateForm instance to our Insert() method.
+    id, err := app.snippets.Insert(form.Title, form.Content, form.Expires)
+    if err != nil {
+        app.serverError(w, r, err)
+        return
+    }
+
+    http.Redirect(w, r, fmt.Sprintf("/snippet/view/%d", id), http.StatusSeeOther)
+}
+```
+
+**File: `cmd/web/templates/create.tmpl`**
+
+```html
+{{define "title"}}Create a New Snippet{{end}}
+
+{{define "main"}}
+<form action='/snippet/create' method='POST'>
+    <div>
+        <label>Title:</label>
+        <!-- Use the `with` action to render the value of .Form.FieldErrors.title
+        if it is not empty. -->
+        {{with .Form.FieldErrors.title}}
+            <label class='error'>{{.}}</label>
+        {{end}}
+        <!-- Re-populate the title data by setting the `value` attribute. -->
+        <input type='text' name='title' value='{{.Form.Title}}'>
+    </div>
+    <div>
+        <label>Content:</label>
+        <!-- Likewise render the value of .Form.FieldErrors.content if it is not
+        empty. -->
+        {{with .Form.FieldErrors.content}}
+            <label class='error'>{{.}}</label>
+        {{end}}
+        <!-- Re-populate the content data as the inner HTML of the textarea. -->
+        <textarea name='content'>{{.Form.Content}}</textarea>
+    </div>
+    <div>
+        <label>Delete in:</label>
+        <!-- And render the value of .Form.FieldErrors.expires if it is not empty. -->
+        {{with .Form.FieldErrors.expires}}
+            <label class='error'>{{.}}</label>
+        {{end}}
+        <!-- Here we use the `if` action to check if the value of the re-populated
+        expires field equals 365. If it does, then we render the `checked`
+        attribute so that the radio input is re-selected. -->
+        <input type='radio' name='expires' value='365' {{if (eq .Form.Expires 365)}}checked{{end}}> One Year
+        <!-- And we do the same for the other possible values too... -->
+        <input type='radio' name='expires' value='7' {{if (eq .Form.Expires 7)}}checked{{end}}> One Week
+        <input type='radio' name='expires' value='1' {{if (eq .Form.Expires 1)}}checked{{end}}> One Day
+    </div>
+    <div>
+        <input type='submit' value='Publish snippet'>
+    </div>
+</form>
+{{end}}
+```
+
+**Key Points**
+
+- All the struct fields are deliberately exported (i.e. start with a capital letter) in order to be read by the `html/template` package when rendering the template.
+  - `{{.Form.Title}}`
+- Map key names don’t have to be capitalized to access them from a template.
+  - `{{.Form.FieldErrors.title}}`
+
+- Use the `with` action to render the value of `Form.FieldErrors.***` if it is not empty.
+- Use the `if` action to check if the value of the re-populated `expires` field equals `365`.
+
+- Re-populate the data by setting the `value` attribute or the inner HTML.
+
+- Set default or initial values for the form fields in `snippetCreate`.
+  ```go
+  data.Form = snippetCreateForm{
+      Expires: 365,
+  }
+  ```
+  - Have to initialize `data.Form` in case `{{with .Form.FieldErrors.title}}` results in an error because `Form` is `nil`.
+
+2. **Restful Routing**
+
+- Our routes:
+  | Route pattern          | Handler           |
+  |------------------------|-------------------|
+  | GET /snippets          | snippetIndex      |
+  | GET /snippet/view/{id} | snippetView       |
+  | GET /snippets/create   | snippetCreate     |
+  | POST /snippet/create   | snippetCreatePost |
+
+- Why not:
+  | Route pattern        | Handler           |
+  |----------------------|-------------------|
+  | GET /snippets        | snippetIndex      |
+  | GET /snippets/{id}   | snippetView       |
+  | GET /snippets/create | snippetCreate     |
+  | POST /snippets       | snippetCreatePost |
+
+- **Route Overlap Risks**
+  ```go
+  GET /snippets/{id}      # Dynamic path
+  GET /snippets/create    # Static path
+  ```
+  - When IDs are non-numeric (e.g., user-generated strings or a random 6-character string), there exists a risk of a route overlap.
+  - For example, when a user creates a snippet with the ID `create`, the route `/snippets/create` will be matched by the `snippetCreate` handler.
+    - In Go 1.22+ router: Static paths (`/create`) always take precedence over dynamic patterns (`/{id}`)
+
+- **Form Submission UX Challenges**
+  ```go
+  GET /snippets/create
+  POST /snippets
+  ```
+
+  - **Form Submission Flow**:
+    - The form at `/snippets/create` submits to `POST /snippets`.
+    - When validation fails, your code renders `create.tmpl` but...
+    - The browser's address bar still shows `/snippets` because:
+      - That's the endpoint where the `POST` was sent.
+      - You're not redirecting back to `/snippets/create`.
+    - This is midleading because a `GET` request to `/snippets` renders something else.
+  
+  - **Solution**:
+    - **Redirect**
+      ```go
+      // snippetCreatePost
+      if len(form.FieldErrors) > 0 {
+          // Store form in session and redirect back
+          app.sessionManager.Put(r.Context(), "form", form)
+          http.Redirect(w, r, "/snippets/create", http.StatusSeeOther)
+          return
+      }
+      ```
+      ```go
+      // snippetCreate
+      form := app.sessionManager.Pop(r.Context(), "form").(any) // type assert
+      data := app.newTemplateData(r)
+      data.Form = form
+      app.render(w, r, http.StatusOK, "create.tmpl", data)
+      ```
+    - **Change the route**
+      ```go
+      GET /snippets/create
+      POST /snippets/create
+      ```
+
+### Key Takeaways
+
+- **Validation Flow**:
+  - Parse form data.
+  - Populate form struct.
+  - Validate fields.
+  - Return 422 with errors if invalid.
+  - Redirect on success.
+
+- **Form Repopulation**
+  - Text fields: `value` attribute.
+  - Textareas: Inner HTML.
+  - Radio buttons: `checked` attribute with `eq` comparison.
+
+- **Error Display**:
+  - Conditional display using `with`.
+
+- **Initial State**:
+  - Initialize `snippetCreateForm` fields in `snippetCreate` in case `Form` is `nil`.
+  - Set default values here.
+  ```go
+  data.Form = snippetCreateForm{
+    Expires: 365
+  }
+  ```
+
+- **Route Design**:
+  - Avoid overlapping patterns.
+  - Keep URLs consistent during form submission.
