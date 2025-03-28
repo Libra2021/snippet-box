@@ -4502,3 +4502,106 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
   - Use `r.URL.Query().Get()` for `GET` parameters.
   - Only use `r.Form` for agnostic data access.
   - Avoid `PostFormValue()` (silently ignores parse errors).
+
+## 7.3 Validating form data
+
+**Implementation**
+
+**File: `cmd/web/handlers.go`**
+
+```go
+package main
+
+import (
+    "errors"
+    "fmt"
+    "net/http"
+    "strconv"
+    "strings"      // New import
+    "unicode/utf8" // New import
+
+    "snippetbox.alexedwards.net/internal/models"
+)
+
+...
+
+func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request) {
+    err := r.ParseForm()
+    if err != nil {
+        app.clientError(w, http.StatusBadRequest)
+        return
+    }
+
+    title := r.PostForm.Get("title")
+    content := r.PostForm.Get("content")
+
+    expires, err := strconv.Atoi(r.PostForm.Get("expires"))
+    if err != nil {
+        app.clientError(w, http.StatusBadRequest)
+        return
+    }
+
+    // Initialize a map to hold any validation errors for the form fields.
+    fieldErrors := make(map[string]string)
+
+    // Check that the title value is not blank and is not more than 100
+    // characters long. If it fails either of those checks, add a message to the
+    // errors map using the field name as the key.
+    if strings.TrimSpace(title) == "" {
+        fieldErrors["title"] = "This field cannot be blank"
+    } else if utf8.RuneCountInString(title) > 100 {
+        fieldErrors["title"] = "This field cannot be more than 100 characters long"
+    }
+
+    // Check that the Content value isn't blank.
+    if strings.TrimSpace(content) == "" {
+        fieldErrors["content"] = "This field cannot be blank"
+    }
+
+    // Check the expires value matches one of the permitted values (1, 7 or
+    // 365).
+    if expires != 1 && expires != 7 && expires != 365 {
+        fieldErrors["expires"] = "This field must equal 1, 7 or 365"
+    }
+
+    // If there are any errors, dump them in a plain text HTTP response and
+    // return from the handler.
+    if len(fieldErrors) > 0 {
+        fmt.Fprint(w, fieldErrors)
+        return
+    }
+
+    id, err := app.snippets.Insert(title, content, expires)
+    if err != nil {
+        app.serverError(w, r, err)
+        return
+    }
+
+    http.Redirect(w, r, fmt.Sprintf("/snippet/view/%d", id), http.StatusSeeOther)
+}
+```
+
+**Key Points**
+
+- **Validation**:
+  - Use `strings.TrimSpace()` to check for blank values.
+  - Use `utf8.RuneCountInString()` to check for long values.
+
+- **Error Handling**:
+  - Use a map to store validation errors.
+  - Return the errors to the user.
+
+- **`utf8.RuneCountInString()` vs `len()`**
+  - `utf8.RuneCountInString()` returns the number of _runes_ in a string.
+  - `len()` returns the number of _bytes_ in a string.
+  - `utf8.RuneCountInString()` is more accurate for _non-ASCII_ characters.
+  - For example:
+    ```go
+    utf8.RuneCountInString("Hello, 世界") // 8
+    len("Hello, 世界") // 13
+
+    utf8.RuneCountInString("Zoë") // 3
+    len("Zoë") // 4
+    ```
+
+- You can find a bunch of code patterns for processing and validating different types of inputs in [this blog post](https://www.alexedwards.net/blog/validation-snippets-for-go).
