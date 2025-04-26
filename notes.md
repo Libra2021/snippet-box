@@ -2,11 +2,9 @@
 
 ## 2.1 Project setup and creating a module
 
-- In the Go community, a common convention is to base your module paths on a URL that you own.
+- In Go, module paths should match a URL you own.
 
-- If you’re creating a project which can be downloaded and used by other people and programs, then it’s good practice for your module path to equal the location that the code can be downloaded from.
-
-  For instance, if your package is hosted at `https://github.com/foo/bar` then the module path for the project should be `github.com/foo/bar`.
+- For shareable projects, the module path should equal the code's download URL, e.g., `github.com/foo/bar` if hosted there.
 
 ## 2.2 Web application basics
 
@@ -33,11 +31,10 @@ func main() {
 }
 ```
 
-- The `home` handler function is just a regular Go function with two parameters.
+- `home` is a standard Go func with 2 params.
 
-- Any error returned by `http.ListenAndServe()` is always non-nil.
-
-- Go’s servemux treats the route pattern `"/"` like a catch-all.
+- `http.ListenAndServe()` always returns non-nil errors.
+- Go's servemux treats `"/"` as a catch-all.
 
 ## 2.3 Routing requests
 
@@ -74,47 +71,33 @@ func main() {
 }
 ```
 
-- When a pattern doesn’t have a trailing slash, it will only be matched when the request URL path exactly matches the pattern in full.
+**Route Patterns in Go**
 
-- When a route pattern ends with a trailing slash — like `"/"` or `"/static/"` — it is known as a subtree path pattern. Subtree path patterns are matched whenever the start of a request URL path matches the subtree path. You can think of subtree paths as acting a bit like they have a wildcard at the end, like `"/**"` or `"/static/**"`.
+- **Exact match**: No trailing slash (`/foo`) → matches only exact paths.
+- **Subtree path**: Trailing slash (`/foo/`) → matches `/foo/**` (prefix match).
+- **Disable subtree**: Append `{$}` (`/foo/{$}`) → forces exact match.
+- **Path cleaning**: Redirects `.`, `..`, or `//` to clean URLs (e.g., `/foo/bar/..//baz` → `/foo/baz`).
+- **Trailing slash redirect**: `/foo` → `/foo/` if `/foo/` is registered.
+- **Host-specific routes**: Checked first (e.g., `foo.example.org/` before `/`).
 
-- Append the special character sequence `{$}` to the end of the pattern — like `"/{$}"` or `"/static/{$}"` to prevent subtree path patterns.
+**Default ServeMux**
 
-- Request URL paths are automatically sanitized. If the request path contains any `.` or `..` elements or repeated slashes, the user will automatically be redirected to an equivalent clean URL. For example, if a user makes a request to `/foo/bar/..//baz` they will automatically be sent a `301 Permanent Redirect` to `/foo/baz` instead.
+```go
+func main() {
+    http.HandleFunc("/", home)
+    http.HandleFunc("/snippet/view", snippetView)
+    http.HandleFunc("/snippet/create", snippetCreate)
 
-- If a subtree path has been registered and a request is received for that subtree path without a trailing slash, then the user will automatically be sent a `301 Permanent Redirect` to the subtree path with the slash added. For example, if you have registered the subtree path /foo/, then any request to `/foo` will be redirected to `/foo/`.
+    log.Print("starting server on :4000")
 
-- It’s possible to include host names in your route patterns. This can be useful when you want to redirect all HTTP requests to a canonical URL, or if your application is acting as the back end for multiple sites or services. For example:
+    err := http.ListenAndServe(":4000", nil)
+    log.Fatal(err)
+}
+```
 
-  ```go
-  mux := http.NewServeMux()
-  mux.HandleFunc("foo.example.org/", fooHandler)
-  mux.HandleFunc("bar.example.org/", barHandler)
-  mux.HandleFunc("/baz", bazHandler)
-  ```
-
-  When it comes to pattern matching, any host-specific patterns will be checked first and if there is a match the request will be dispatched to the corresponding handler. Only when there isn’t a host-specific match found will the non-host specific patterns also be checked.
-
-- `http.Handle()` and `http.HandleFunc()` allow you to register routes without explicitly declaring a servemux, like this:
-
-  ```go
-  func main() {
-      http.HandleFunc("/", home)
-      http.HandleFunc("/snippet/view", snippetView)
-      http.HandleFunc("/snippet/create", snippetCreate)
-
-      log.Print("starting server on :4000")
-
-      err := http.ListenAndServe(":4000", nil)
-      log.Fatal(err)
-  }
-  ```
-
-  Behind the scenes, these functions register their routes with something called the _default servemux_. This is just a regular servemux like we’ve already been using, but which is initialized automatically by Go and stored in the `http.DefaultServeMux` global variable.
-
-  If you pass `nil` as the second argument to `http.ListenAndServe()`, the server will use `http.DefaultServeMux` for routing.
-
-  But for the sake of clarity, maintainability and security, it’s generally a good idea to avoid `http.DefaultServeMux` and the corresponding helper functions.
+- `http.Handle()` / `http.HandleFunc()` register routes in `http.DefaultServeMux`.
+- Using `nil` in `ListenAndServe()` defaults to `DefaultServeMux`.
+- **Best practice**: Avoid `DefaultServeMux` for clarity and security.
 
 ## 2.4 Wildcard route patterns
 
@@ -160,126 +143,57 @@ func main() {
 }
 ```
 
-- Wildcard segments in a route pattern are denoted by an wildcard identifier inside `{}` brackets. Like this:
+**Wildcard Routing in Go**
 
-  ```go
-  mux.HandleFunc("/products/{category}/item/{itemID}", exampleHandler)
-  ```
+- **Syntax**: `/{name}` (no patterns like `/c_{category}`, `/{y}-{m}-{d}`, or `/{slug}.html`).
+- **Access values**: Use `r.PathValue("name")` (returns string; validate before use).
 
-  Patterns like `"/products/c_{category}"`, `/date/{y}-{m}-{d}` or `/{slug}.html` are not valid.
+**Precedence Rules**
 
-- Inside your handler, you can retrieve the corresponding value for a wildcard segment using its identifier and the `r.PathValue()` method. For example:
+- Most specific path wins (`/post/edit` > `/post/{id}`).
+- Conflicts (e.g., `/post/new/{id}` vs. `/post/{author}/latest`) cause runtime panic → avoid overlaps.
 
-  ```go
-  func exampleHandler(w http.ResponseWriter, r *http.Request) {
-      category := r.PathValue("category")
-      itemID := r.PathValue("itemID")
+**Subtree Wildcards**
 
-      ...
-  }
-  ```
+- `"/user/{id}/"` matches `/user/1/`, `/user/2/a/b`, etc.
 
-  The `r.PathValue()` method always returns a string value and you should validate or sanity check the value before doing anything important with it.
+**Remainder Wildcards**
 
-**Precedence and conflicts**
-
-- The most specific route pattern wins. For example: `/post/edit` will match `"/post/edit"` instead of `"/post/{id}"`.
-
-- `/post/new/latest` won't match `"/post/new/{id}"` and `"/post/{author}/latest"` because Go’s servemux considers the patterns to conflict, and will panic at runtime when initializing the routes.
-- keep overlaps to a minimum or avoid them completely.
-
-**Subtree path patterns with wildcards**
-
-- The routing rules we described in the previous chapter still apply. For example: `"/user/{id}/"` will match `/user/1/`, `/user/2/a` and `/user/2/a/b/c`.
-
-**Remainder wildcards**
-
-If a route pattern ends with a wildcard, and this final wildcard identifier ends in `...`, then the wildcard will match any and all remaining segments of a request path. For example, `"/post/{path...}"` will match `/post/a`, `/post/a/b`, `/post/a/b/c` — very much like a subtree path pattern. But you can access the entire wildcard part via `r.PathValue()`. In this example, `r.PathValue("path")` would return `"a/b/c"`.
+- `/{path...}` captures all remaining segments (e.g., `/post/a/b/c` → `r.PathValue("path")` = `"a/b/c"`).
 
 ## 2.5 Method-based routing
 
-1. **Restricting Routes to Specific HTTP Methods**
+**Method-Specific Routes**
 
-- To restrict a route to a specific HTTP method, prefix the route pattern with the HTTP method.
-
-- Example:
-
+- Prefix pattern with uppercase method (`GET /path`):
   ```go
   mux.HandleFunc("GET /{$}", home)
-  mux.HandleFunc("GET /snippet/view/{id}", snippetView)
-  mux.HandleFunc("GET /snippet/create", snippetCreate)
-  ```
-
-- **Note**: HTTP methods in route patterns are **case-sensitive** and must be **uppercase**, followed by at least one whitespace character.
-
-- A route registered with the `GET` method matches both `GET` and `HEAD` requests.
-- Other methods (`POST`, `PUT`, `DELETE`) require an exact match.
-
-- It's acceptable to declare multiple routes with the same pattern but different HTTP methods.
-  ```go
-  mux.HandleFunc("GET /snippet/create", snippetCreate)
   mux.HandleFunc("POST /snippet/create", snippetCreatePost)
   ```
-
-2. **Handling Unsupported Methods**
-
-- If a request uses an unsupported method, Go's `ServeMux` automatically sends a `405 Method Not Allowed` response which includes an `Allow` header listing supported methods.
-
-3. **Testing with `curl`**
-
-- **GET Request**:
-
-  ```bash
-  curl -i localhost:4000/snippet/create
+- `GET` matches `HEAD`; other methods require exact match.
+- Multiple methods per path allowed:
+  ```go
+  mux.HandleFunc("GET /create", snippetCreate)
+  mux.HandleFunc("POST /create", snippetCreatePost)
   ```
 
-- **HEAD Request**:
+**Automatic Responses**
 
-  ```bash
-  curl --head localhost:4000/snippet/create
-  ```
+- Unsupported methods → `405 Method Not Allowed` (with `Allow` header).
 
-- **POST Request**:
+**Precedence Rules**
 
-  ```bash
-  curl -i -d "" localhost:4000/snippet/create
-  ```
+- Method-specific routes (`POST /path`) override method-agnostic (`/path`).
 
-- **DELETE Request**:
-  ```bash
-  curl -i -X DELETE localhost:4000/snippet/create
-  ```
+**Limitations**
 
-4. **Method Precedence**
-
-- The most specific pattern wins.
-- A route pattern without a method (e.g., `"/article/{id}"`) matches requests with any method.
-- A route pattern with a method (e.g., `"POST /article/{id}"`) takes precedence over a pattern without a method.
-
-5. **Handler Naming Conventions**
-
-- No strict rules for naming handlers in Go.
-- Common conventions:
-  - Postfix `Post` for handlers dealing with `POST` requests (e.g., `snippetCreatePost`).
-  - Prefix `get` or `post` (e.g., `getSnippetCreate`, `postSnippetCreate`).
-  - Use descriptive names (e.g., `newSnippetForm`, `createSnippet`).
-
-6. **Limitations of Standard Library Routing**
-
-- **Not Supported**:
-
-  - Custom `404 Not Found` and `405 Method Not Allowed` responses.
-  - Regular expressions in route patterns or wildcards.
-  - Matching multiple HTTP methods in a single route declaration.
-  - Automatic support for `OPTIONS` requests.
-  - Routing based on HTTP request headers.
-
-- **Recommended Third-Party Routers**:
-  - `httprouter`
-  - `chi`
-  - `flow`
-  - `gorilla/mux`
-    Comparison and guidance in this [blog](https://www.alexedwards.net/blog/which-go-router-should-i-use).
+- **Not supported**:
+  - Regex/advanced wildcards
+  - Custom 404/405 pages
+  - Multi-method routes
+  - `OPTIONS` auto-handling
+  - Header-based routing
+- **Alternatives**: `chi`, `httprouter`, `gorilla/mux` ([comparison](https://www.alexedwards.net/blog/which-go-router-should-i-use)).
 
 ---
 
@@ -336,12 +250,12 @@ func main() {
 
 ## 2.6 Customizing responses
 
-1. **Default Response Behavior**
+**Default Response Behavior**
 
 - By default, responses have:
 
   - Status code: `200 OK`
-  - Headers: `Date`, `Content-Length`, and `Content-Type` (automatically generated).
+  - Headers: `Date`, `Content-Length`, and `Content-Type` (sniffed).
 
 - Example:
 
@@ -355,42 +269,33 @@ func main() {
   Hello from Snippetbox
   ```
 
-2. **Customizing HTTP Status Codes**
+**Custom Status Codes**
 
-- Use `w.WriteHeader(statusCode)` to set a custom status code.
+```go
+w.WriteHeader(http.StatusCreated)  // 201
+// OR
+w.WriteHeader(404)  // Must be called before Write()
+```
 
-- Example:
+- **Note**: `w.WriteHeader` can only be called once per response.
 
-  ```go
-  func snippetCreatePost(w http.ResponseWriter, r *http.Request) {
-      w.WriteHeader(http.StatusCreated) // w.WriteHeader(201)
-      w.Write([]byte("Save a new snippet..."))
-  }
-  ```
+**Headers**
 
-- Use constants from the `net/http` package for clarity and to avoid typos.
-
-- **Important**:
-  - `w.WriteHeader()` can only be called **once** per response.
-  - If not called explicitly, the first `w.Write()` will send a `200 OK` status.
-
-3. **Customizing Response Headers**
-
-- Use `w.Header().Add()` to add custom headers.
-
-- Example:
+- **Set before writing**:
 
   ```go
-  func home(w http.ResponseWriter, r *http.Request) {
-      w.Header().Add("Server", "Go")
-      w.Write([]byte("Hello from Snippetbox"))
-  }
+  w.Header().Set("Content-Type", "application/json")
+  w.Header().Add("Cache-Control", "public")
   ```
 
-- **Important**:
-  - Headers must be set **before** calling `w.WriteHeader()` or `w.Write()`. Changes to headers after calling `w.WriteHeader()` or `w.Write()` are ignored.
+- **Methods**:
 
-4. **Writing Response Bodies**
+  - `Set()`: Overwrite
+  - `Add()`: Append
+  - `Del()`: Remove
+  - `Get()`/`Values()`: Read
+
+**Writing Response Bodies**
 
 - For any functions that satisfy the `io.Writer` interface, you can pass in your `http.ResponseWriter` value.
 
@@ -408,52 +313,27 @@ func main() {
   fmt.Fprint(w, "Hello world")
   ```
 
-5. **Content Sniffing**
+**JSON Responses**
 
-- Go automatically sets the `Content-Type` header using `http.DetectContentType()` based on the response body except for JSON.
+- Go automatically sets the `Content-Type` header except for JSON.
 
 - For JSON responses, manually set the `Content-Type` header:
   ```go
   w.Header().Set("Content-Type", "application/json")
-  w.Write([]byte(`{"name":"Alex"}`))
+  w.Write([]byte(`{"status":"ok"}`))
   ```
 
-6. **Manipulating the Header Map**
+**Header Canonicalization**
 
-- Methods for manipulating headers:
+- Names auto-capitalized (`cache-control` → `Cache-Control`)
 
-  - `Set()`: Overwrites an existing header.
-  - `Add()`: Appends a new header (can be called multiple times).
-  - `Del()`: Deletes a header.
-  - `Get()`: Retrieves the first value of a header.
-  - `Values()`: Retrieves all values of a header.
-
-- Example:
-
-  ```go
-  w.Header().Set("Cache-Control", "public, max-age=31536000")
-
-  w.Header().Add("Cache-Control", "public")
-  w.Header().Add("Cache-Control", "max-age=31536000")
-
-  w.Header().Del("Cache-Control")
-
-  w.Header().Get("Cache-Control")
-
-  w.Header().Values("Cache-Control")
-  ```
-
-7. **Header Canonicalization**
-
-- Header names are canonicalized (e.g., `cache-control` → `Cache-Control`) using `textproto.CanonicalMIMEHeaderKey()` which means that when calling these methods (`Set()`, `Add()`, `Del()`, `Get()` and `Values()`) the header name is case-insensitive.
-
-- To avoid canonicalization, modify the header map directly:
+- **Bypass**: Direct map access:
 
   ```go
   w.Header()["X-XSS-Protection"] = []string{"1; mode=block"}
   ```
 
-- If a HTTP/2 connection is being used, Go will always automatically convert the header names and values to lowercase for you when writing the response.
+- HTTP/2: Headers converted to lowercase
 
 ---
 
@@ -513,50 +393,34 @@ func main() {
 
 ## 2.7 Project structure and organization
 
-1. **Project Structure Overview**
+**Standard Layout**
 
-- There’s no single "right" way to structure Go projects, but a common approach is:
+```
+project/
+├── cmd/          # Entry points (e.g., `cmd/web/main.go`)
+│   └── web/
+│       ├── main.go
+│       └── handlers.go
+├── internal/     # Private reusable code (enforced import protection)
+└── ui/           # UI assets
+    ├── html/     # Templates
+    └── static/   # CSS/JS
+```
 
-  - `cmd/`: Contains application-specific code (e.g., `cmd/web` for the web application).
-  - `internal/`: Contains reusable, non-application-specific code (e.g., validation helpers, database models).
-  - `ui/`: Contains user-interface assets (e.g., HTML templates in `ui/html`, static files in `ui/static`).
+**Key Benefits**
 
-- Example:
-  ```
-  snippetbox/
-  ├── cmd/
-  │   └── web/
-  │       ├── main.go
-  │       └── handlers.go
-  ├── internal/
-  ├── ui/
-  │   ├── html/
-  │   └── static/
-  ```
+- **Clean separation**: Go code (`cmd/`, `internal/`) vs. assets (`ui/`)
 
-2. **Benefits of This Structure**
+- **Scalable**: Add new executables (e.g., `cmd/cli`)
+- **Safety**: `internal/` prevents external imports
 
-- **Separation of Concerns**:
+**Usage**
 
-  - Go code lives under `cmd` and `internal`.
-  - Non-Go assets (e.g., HTML, CSS) live under `ui`.
+```bash
+go run ./cmd/web  # Run from project root
+```
 
-- **Scalability**:
-  - Easy to add additional executables (e.g., a CLI under `cmd/cli`).
-  - Reusable code in `internal` can be shared across executables.
-
-3. **Running the Application**
-
-- Use `go run` to start the application:
-  ```bash
-  cd $HOME/code/snippetbox
-  go run ./cmd/web
-  ```
-
-4. **The `internal` Directory**
-
-- Packages under `internal` can only be imported by code inside the parent of the `internal` directory.
-- Prevents external codebases from importing and relying on internal packages.
+------
 
 **Refactored Code**
 
@@ -620,218 +484,56 @@ func snippetCreatePost(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-## 2.8 HTML templating and inheritance
-
-1. **Template File Creation**
-
-**File: `ui/html/pages/home.tmpl`**
-
-```html
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Home - Snippetbox</title>
-  </head>
-  <body>
-    <header>
-      <h1><a href="/">Snippetbox</a></h1>
-    </header>
-    <main>
-      <h2>Latest Snippets</h2>
-      <p>There's nothing to see here yet!</p>
-    </main>
-    <footer>Powered by <a href="https://golang.org/">Go</a></footer>
-  </body>
-</html>
-```
-
-2. **Rendering the Template in Go**
-
-- Use the `html/template` package to parse and render the template.
-
-**File: `cmd/web/handlers.go`**
-
-```go
-package main
-
-import (
-    "html/template"
-    "log"
-    "net/http"
-)
-
-func home(w http.ResponseWriter, r *http.Request) {
-    w.Header().Add("Server", "Go")
-
-    ts, err := template.ParseFiles("./ui/html/pages/home.tmpl")
-    if err != nil {
-        log.Print(err.Error())
-        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-        return
-    }
-
-    err = ts.Execute(w, nil)
-    if err != nil {
-        log.Print(err.Error())
-        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-    }
-}
-```
-
-- **Note**:
-  - `template.ParseFiles()` function must either be relative to your current working directory, or an absolute path.
-  - The last parameter to `Execute()` represents any dynamic data that we want to pass in.
-
-3. **Template Composition**
-
-**File: `ui/html/base.tmpl`**
-
-```html
-{{define "base"}}
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>{{template "title" .}} - Snippetbox</title>
-  </head>
-  <body>
-    <header>
-      <h1><a href="/">Snippetbox</a></h1>
-    </header>
-    {{template "nav" .}}
-    <main>{{template "main" .}}</main>
-    <footer>Powered by <a href="https://golang.org/">Go</a></footer>
-  </body>
-</html>
-{{end}}
-```
-
-**File: `ui/html/pages/home.tmpl`**
-
-```html
-{{define "title"}}Home{{end}} {{define "main"}}
-<h2>Latest Snippets</h2>
-<p>There's nothing to see here yet!</p>
-{{end}}
-```
-
-**File: `ui/html/partials/nav.tmpl`**
-
-```html
-{{define "nav"}}
-<nav>
-  <a href="/">Home</a>
-</nav>
-{{end}}
-```
-
-**File: `cmd/web/handlers.go`**
-
-```go
-package main
-
-...
-
-func home(w http.ResponseWriter, r *http.Request) {
-    w.Header().Add("Server", "Go")
-
-    files := []string{
-        "./ui/html/base.tmpl",
-        "./ui/html/partials/nav.tmpl",
-        "./ui/html/pages/home.tmpl",
-    }
-
-    ts, err := template.ParseFiles(files...)
-    if err != nil {
-        log.Print(err.Error())
-        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-        return
-    }
-
-    err = ts.ExecuteTemplate(w, "base", nil)
-    if err != nil {
-        log.Print(err.Error())
-        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-    }
-}
-
-...
-```
-
-- **Note**:
-  - The dot at the end of the {{template "title" .}} action represents any dynamic data that you want to pass to the invoked template.
-  - The `{{block}}` action allows you to specify default content if a template doesn’t exist. For example:
-    ```html
-    {{define "base"}}
-    <h1>An example template</h1>
-    {{block "sidebar" .}}
-    <p>My default sidebar content</p>
-    {{end}} {{end}}
-    ```
-    You can also leave the default content empty which means the invoked template acts like it’s ‘optional’.
-
 ## 2.9 Serving static files
 
-```bash
-cd $HOME/code/snippetbox
-curl https://www.alexedwards.net/static/sb-v2.tar.gz | tar -xvz -C ./ui/static/
+**Basic File Server Setup**
+
+```go
+fileServer := http.FileServer(http.Dir("./ui/static/"))
+mux.Handle("GET /static/", http.StripPrefix("/static", fileServer))
 ```
 
-1. **The http.Fileserver handler**
+- `http.StripPrefix` removes `/static` from URL paths before file lookup
+- Example: `/static/css/main.css` → serves `./ui/static/css/main.css`
 
-- Go's `net/http` package provides `http.FileServer` to serve files over HTTP from a specific directory.
+**Key Features**
 
-  ```go
-  fileServer := http.FileServer(http.Dir("./ui/static/"))
-  mux.Handle("GET /static/", http.StripPrefix("/static", fileServer))
-  ```
+- **Security**
 
-- `http.StripPrefix` removes `/static` from the URL path before passing it to the file server.
-  - `/static/css/style.css` → `css/style.css` → `./ui/static/css/style.css`
-
-2. **Additional Features of `http.FileServer`**
-
-- **Path Sanitization**:
-  Automatically cleans paths using `path.Clean()` to prevent directory traversal attacks.
-
-- **Range Requests**:
-  Supports partial content requests for large files (e.g., resumable downloads).
-
-  ```bash
-  $ curl -i -H "Range: bytes=100-199" --output - http://localhost:4000/static/img/logo.png
-  HTTP/1.1 206 Partial Content
-  Accept-Ranges: bytes
-  Content-Length: 100
-  Content-Range: bytes 100-199/1075
-  Content-Type: image/png
-  Last-Modified: Wed, 18 Mar 2024 11:29:23 GMT
-  Date: Wed, 18 Mar 2024 11:29:23 GMT
-  [binary data]
-  ```
-
-- **Caching**:
-  Uses `Last-Modified` and `If-Modified-Since` headers to send `304 Not Modified` responses for unchanged files.
-
-- **Content-Type Detection**:
-  Automatically sets `Content-Type` based on file extensions using `mime.TypeByExtension()`.
-
-3. **Serving Single Files**
-
-- Use `http.ServeFile()` to serve individual files:
+  - Automatic path sanitization prevents directory traversal attacks
+  - For custom file serving, always sanitize paths:
 
   ```go
-  func downloadHandler(w http.ResponseWriter, r *http.Request) {
-      http.ServeFile(w, r, "./ui/static/file.zip")
-  }
+  http.ServeFile(w, r, filepath.Clean("./ui/static/"+userProvidedPath))
   ```
 
-- **Warning**: `http.ServeFile()` does not automatically sanitize the file path. Always sanitize file paths with `filepath.Clean()` when constructing paths from user input to prevent directory traversal attacks.
+- **Performance Optimizations**
 
-4. **Disabling Directory Listings**
+  - Supports HTTP Range requests (206 Partial Content)
+  - Automatic `304 Not Modified` responses using `Last-Modified` headers
+  - Content-Type detection from file extensions
 
-- Simple Method: Add an empty `index.html` file to directories you want to hide.
-- Advanced Method: Create a custom `http.FileSystem` implementation that returns `os.ErrNotExist` for directories. Refer to this [blog](https://www.alexedwards.net/blog/disable-http-fileserver-directory-listings) for details.
+- **Directory Listings**
+
+  - Disable by adding empty `index.html` files
+  - Advanced method: [Custom FileSystem implementation](https://www.alexedwards.net/blog/disable-http-fileserver-directory-listings)
+
+**Single File Serving**
+
+```go
+func downloadHandler(w http.ResponseWriter, r *http.Request) {
+    http.ServeFile(w, r, "./ui/static/report.pdf")
+}
+```
+
+⚠️ **Warning**: Unlike `FileServer`, `ServeFile` doesn't automatically sanitize paths
+
+**Example cURL Test**
+
+```bash
+# Test partial content support
+curl -H "Range: bytes=0-100" http://localhost:4000/static/large-file.zip
+```
 
 ---
 
@@ -900,179 +602,113 @@ func main() {
 
 ## 2.10 The http.Handler interface
 
-1. **Overview**
+**Handlers**
 
-A handler is an object that satisfies the `http.Handler` interface:
+- A handler satisfies `http.Handler`:
+  ```go
+  type Handler interface {
+      ServeHTTP(ResponseWriter, *Request)
+  }
+  ```
 
-```go
-type Handler interface {
-    ServeHTTP(ResponseWriter, *Request)
-}
-```
+- Struct example:
+  ```go
+  type home struct{}
+  func (h *home) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+      w.Write([]byte("This is my home page"))
+  }
+  mux.Handle("/", &home{})
+  ```
 
-Here’s an example of a handler using a struct:
+**Handler Functions**
 
-```go
-type home struct {}
+- Function example:
+  ```go
+  func home(w http.ResponseWriter, r *http.Request) {
+      w.Write([]byte("This is my home page"))
+  }
+  ```
 
-func (h *home) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-    w.Write([]byte("This is my home page"))
-}
-```
+- Conversion methods:
+  ```go
+  mux.Handle("/", http.HandlerFunc(home))  // Adapter
+  mux.HandleFunc("/", home)               // Shortcut
+  ```
 
-This handler can be registered with a servemux using the `Handle` method:
+**Handler Chain**
 
-```go
-mux := http.NewServeMux()
-mux.Handle("/", &home{})
-```
+- Servemux is a handler (implements `ServeHTTP`)
+- Flow:
+  1. Server calls servemux's `ServeHTTP()`
+  2. Servemux routes to matching handler
+  3. Handler's `ServeHTTP()` generates response
 
-2. **Handler Functions**
+**Concurrency**
 
-Creating a struct just to implement `ServeHTTP()` is often unnecessary. Instead, it's more common to write handlers as normal functions:
-
-```go
-func home(w http.ResponseWriter, r *http.Request) {
-    w.Write([]byte("This is my home page"))
-}
-```
-
-However, this function isn't a handler by itself. To convert it into a handler, use the http.`HandlerFunc()` adapter:
-
-```go
-mux := http.NewServeMux()
-mux.Handle("/", http.HandlerFunc(home))
-```
-
-The `HandleFunc()` method simplifies the process by transforming a function into a handler and registering it in one step:
-
-```go
-mux := http.NewServeMux()
-mux.HandleFunc("/", home)
-```
-
-3. **Chaining Handlers**
-
-The `http.ListenAndServe()` function takes a `http.Handler` as its second parameter:
-
-```go
-func ListenAndServe(addr string, handler Handler) error
-```
-
-A servemux can be passed to `ListenAndServe` because it also implements the `ServeHTTP()` method, satisfying the `http.Handler` interface. This allows the servemux to act as a special kind of handler that routes requests to other handlers.
-
-- How it works:
-  - The server receives an HTTP request.
-  - It calls the servemux's `ServeHTTP()` method.
-  - The servemux looks up the appropriate handler based on the request method and URL path.
-  - The handler's `ServeHTTP()` method is called to generate the response.
-
-In essence, a Go web application is a chain of ServeHTTP() methods being called sequentially.
-
-4. **Requests are handled concurrently**
-
-All incoming HTTP requests are served in their own goroutine. This makes Go servers highly efficient but also requires careful handling of shared resources to avoid race conditions.
-
-### Key Takeaways
-
-- A handler is any object that implements the `http.Handler` interface.
-- Handlers can be created using structs or normal functions.
-- The `http.HandlerFunc()` adapter converts functions into handlers.
-- Servemuxes are special handlers that route requests to other handlers.
-- Requests are handled concurrently, so be cautious with shared resources.
+- Each request handled in separate goroutine
+- Enables high efficiency
+- Requires careful shared resource management
 
 # Chapter 3: Configuration and error handling
 
 ## 3.1 Managing configuration settings
 
-1. **Overview**
+**Configuration Issues**
 
-Our web application’s `main.go` file currently contains hard-coded configuration settings:
+- Hard-coded settings in `main.go`:
+  - Server address `":4000"`
+  - Static files path `"./ui/static"`
+- Problems:
+  - No config/code separation
+  - Can't change at runtime
 
-- The network address for the server to listen on (`":4000"`)
-- The file path for the static files directory (`"./ui/static"`)
-
-Hard-coding these settings isn’t ideal because:
-
-- There’s no separation between configuration and code.
-- We can’t change settings at runtime (important for different environments like development, testing, and production).
-
-2. **Command-Line Flags**
-
-A common and idiomatic way to manage configuration settings in Go is to use **command-line flags**. For example:
-
-```bash
-go run ./cmd/web -addr=":80"
-```
-
-To accept and parse a command-line flag, use the `flag.String()` function:
+**Command-Line Flags**
 
 ```go
 addr := flag.String("addr", ":4000", "HTTP network address")
 ```
-
-- **Name**: `addr`
-- **Default value**: `":4000"`
-- **Help text**: Explains what the flag controls.
-
-**Note**:
-
-- Ports 0-1023 are restricted and require root privileges. Attempting to use them may result in a `bind: permission denied` error.
-- Command-line flags are optional. If no `-addr` flag is provided, the server falls back to the default value.
-- Use the `-help` flag to list all available command-line flags and their help text:
+- Usage:
   ```bash
-  $ go run ./cmd/web -help
-  Usage of /tmp/go-build3672328037/b001/exe/web:
-    -addr string
-          HTTP network address (default ":4000")
+  go run ./cmd/web -addr=":80"
   ```
+- Notes:
+  - Ports 0-1023 need root
+  - `-help` shows all flags
 
-3. **Type Conversions**
+**Flag Types**
 
-- If the conversion fails, the application exits with an error.
+- Available functions:
+  ```go
+  flag.Int()
+  flag.Bool()
+  flag.Float64()
+  flag.Duration()
+  ```
+- Failed conversions exit app
 
-- Go also provides other flag functions for different types:
-  - `flag.Int()`
-  - `flag.Bool()`
-  - `flag.Float64()`
-  - `flag.Duration()`
-
-4. **Environment Variables**
-
-You can store your configuration settings in environment variables and access them by using the `os.Getenv()`:
+**Environment Variables**
 
 ```go
 addr := os.Getenv("SNIPPETBOX_ADDR")
 ```
+- Limitations:
+  - No defaults
+  - No type conversion
+  - No help text
+- Combined approach:
+  ```bash
+  export SNIPPETBOX_ADDR=":9999"
+  go run ./cmd/web -addr=$SNIPPETBOX_ADDR
+  ```
 
-But this has some drawbacks:
-
-- No default values (`os.Getenv()` returns an empty string if the variable doesn’t exist).
-- No automatic type conversion.
-- No `-help` functionality.
-
-However, you can combine both approaches by passing environment variables as command-line flags:
-
-```bash
-$ export SNIPPETBOX_ADDR=":9999"
-$ go run ./cmd/web -addr=$SNIPPETBOX_ADDR
-2024/03/18 11:29:23 starting server on :9999
-```
-
-5. **Boolean Flags**
-
-For flags defined with `flag.Bool()`, omitting a value is equivalent to setting it to `true`:
+**Boolean Flags**
 
 ```bash
-go run ./example -flag=true
-go run ./example -flag
-
+go run ./example -flag    # = true
 go run ./example -flag=false
 ```
 
-6. **Pre-Existing Variables**
-
-You can parse command-line flag values into pre-existing variables using functions like `flag.StringVar()`, `flag.IntVar()`, and `flag.BoolVar()`. This is useful for storing all configuration settings in a single struct:
+**Struct Configuration**
 
 ```go
 type config struct {
@@ -1080,13 +716,9 @@ type config struct {
     staticDir string
 }
 
-...
-
 var cfg config
-
-flag.StringVar(&cfg.addr, "addr", ":4000", "HTTP network address")
-flag.StringVar(&cfg.staticDir, "static-dir", "./ui/static", "Path to static assets")
-
+flag.StringVar(&cfg.addr, "addr", ":4000", "HTTP address")
+flag.StringVar(&cfg.staticDir, "static-dir", "./ui/static", "Static files path")
 flag.Parse()
 ```
 
@@ -1126,115 +758,83 @@ func main() {
 }
 ```
 
-### Key Takeaways
-
-- Use **command-line flags** for runtime configuration.
-- Leverage **default values** for convenience during development.
-- Use **type-specific flag functions** (`flag.Int()`, `flag.Bool()`, etc.) for automatic type conversion.
-- Combine **environment variables** with command-line flags for flexibility.
-- Store configuration settings in a **struct** for better organization.
-
 ## 3.2 Structured logging
 
-1. **Overview**
+**Structured Logging Overview**
 
-- Replace `log.Printf()` and `log.Fatal()` with structured logging using `log/slog`.
-- Structured logs include:
-  - Timestamp (millisecond precision)
-  - Severity level (`Debug`, `Info`, `Warn`, `Error`)
-  - Log message
-  - Optional key-value attributes
+- Replace `log` package with `slog`
+- Features:
+  - Timestamp (ms precision)
+  - Severity levels (`Debug`, `Info`, `Warn`, `Error`)
+  - Key-value attributes
 
-2. **Creating a Structured Logger**
+**Logger Creation**
 
-- Use `slog.NewTextHandler()` to create a handler for plaintext logs.
-- Use `slog.NewJSONHandler()` for JSON-formatted logs.
+```go
+// Text format
+logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-- Example:
-
-  ```go
-  logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{...}))
-  ```
-
-  ```go
-  logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-  ```
-
-  Output:
-
+// JSON format
+logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+```
+- Output examples:
   ```plaintext
-  {"time":"2024-03-18T11:29:23.00000000+00:00","level":"INFO","msg":"starting server","addr":":4000"}
-  {"time":"2024-03-18T11:29:23.00000000+00:00","level":"ERROR","msg":"listen tcp :4000: bind: address already in use"}
+  time=2024-03-18T11:29:23.000+00:00 level=INFO msg="starting server" addr=:4000
+  ```
+  ```json
+  {"time":"...","level":"ERROR","msg":"address already in use"}
   ```
 
-- **Handler Options**:
+**Handler Options**
 
-  - `os.Stdout`: Writes logs to standard output.
-  - `slog.HandlerOptions`: Customizes handler behavior (e.g., log level, source location). Pass `nil` for the default.
+```go
+&slog.HandlerOptions{
+    Level: slog.LevelDebug,  // Log level threshold
+    AddSource: true,         // Include file/line info
+}
+```
+- Log levels: `Debug` < `Info` < `Warn` < `Error`
 
-    - **log level**:
+**Logging Methods**
 
-      - `slog.LevelDebug`: Logs all messages.
-      - `slog.LevelInfo`: Logs info, warn, and error messages.
-      - `slog.LevelWarn`: Logs warn and error messages.
-      - `slog.LevelError`: Logs only error messages.
-      - ```go
-        logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-            Level: slog.LevelDebug,
-        }))
-        ```
+```go
+logger.Info("message", "key", value)          // Basic
+logger.Error("message", slog.String("k", v))  // Type-safe
+```
+- Supported attribute helpers:
+  `slog.String()`, `slog.Int()`, `slog.Bool()`, `slog.Time()`
 
-    - **Caller location**
+**Implementation Example**
 
-      - Include filename and line number in logs:
+```go
+func main() {
+    logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-        ```go
-        logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-            AddSource: true,
-        }))
-        ```
+    logger.Info("starting server", "addr", *addr)
 
-        ```plaintext
-        time=2024-03-18T11:29:23.000+00:00 level=INFO source=/home/alex/code/snippetbox/cmd/web/main.go:32 msg="starting server" addr=:4000
-        ```
+    err := http.ListenAndServe(*addr, mux)
+    logger.Error(err.Error())
+    os.Exit(1)  // Manual exit replacement for log.Fatal()
+}
+```
 
-3. **Using a Structured Logger**
+**Log Management**
 
-- Log entries are created using `Debug()`, `Info()`, `Warn()`, or `Error()` methods which can accept an arbitrary number of additional attributes (key-value pairs).
-
-- Example:
-
-  ```go
-  logger.Info("request received", "method", "GET", "path", "/")
+- Write to stdout for flexibility
+- Redirect to file:
+  ```bash
+  go run ./cmd/web >> /tmp/web.log  # Append
+  go run ./cmd/web > /tmp/web.log   # Overwrite
   ```
 
-  Output:
+**Concurrency**
 
-  ```plaintext
-  time=2024-03-18T11:29:23.000+00:00 level=INFO msg="request received" method=GET path=/
-  ```
+- `slog` loggers are thread-safe
+- Shared destinations must have concurrency-safe `Write()`
 
-- **Note**: If your attribute keys, values, or log message contain `"` or `=` characters or any whitespace, they will be wrapped in double quotes in the log output.
+---
 
-- **Safer Attributes**:
-
-  - Bad Example:
-
-    ```go
-    logger.Info("starting server", "addr") // Oops, the value for "addr" is missing
-    ```
-
-    ```plaintext
-    time=2024-03-18T11:29:23.000+00:00 level=INFO msg="starting server" !BADKEY=addr
-    ```
-
-  - Use `slog.Any()`, `slog.String()`, `slog.Int()`, `slog.Bool()`, `slog.Time()` and `slog.Duration()` for type-safe attributes.
-  - Example:
-    ```go
-    logger.Info("starting server", slog.String("addr", ":4000"))
-    ```
-
-4. **Adding structured logging to our application**
+**Example Code**
 
 **File: `main.go`**
 
@@ -1279,65 +879,73 @@ func main() {
 }
 ```
 
-- There is no structured logging equivalent to the `log.Fatal()`. Instead, `logger.Error()` and manually calling `os.Exit(1)` to terminate the application.
-
-5. **Decoupled Logging**:
-
-- Write logs to `os.Stdout` for flexibility.
-- Redirect logs to a file in production:
-  ```bash
-  go run ./cmd/web >> /tmp/web.log
-  ```
-- **Note**:
-  - The double arrow `>>` will append to an existing file.
-  - The single arrow `>` will overwrite an existing file.
-
-6. **Concurrent Logging**:
-
-- `slog.New()` loggers are concurrency-safe. You can share a single logger across multiple goroutines.
-- Ensure the destination's `Write()` method is also concurrency-safe if multiple loggers share the same destination.
-
-### Key Takeaways
-
-- **Structured logging** improves log readability, filtering, and parsing compared to standard logging.
-- Use the `log/slog` package to create structured loggers with **severity levels** (`Debug`, `Info`, `Warn`, `Error`).
-- Customize log output with **handler options**:
-  - Set a **minimum log level** (e.g., `Debug`, `Info`).
-  - Include **caller location** (filename and line number) for debugging.
-  - Output logs in **JSON format** for machine readability.
-- **Decouple logging** from application logic by writing logs to `os.Stdout` or redirect logs to files for persistent storage in production.
-- Use **type-safe attributes** (e.g., `slog.String()`, `slog.Int()`) to avoid errors and improve code reliability.
-- Structured loggers are **concurrency-safe**, making them suitable for use across multiple goroutines.
-
 ## 3.3 Dependency injection
 
-1. **Overview**
+**Problem & Solution**
 
-- **Problem**:
+- **Problem**: Handlers use `log.Print` instead of structured logger
+- **Solution**: Dependency injection via application struct rather than global variables
 
-  - The `home` handler in `handlers.go` still uses Go's standard logger (`log.Print`) instead of the structured logger.
-  - Example:
-    ```go
-    func home(w http.ResponseWriter, r *http.Request) {
-        ts, err := template.ParseFiles(files...)
+**Implementation**
+
+```go
+// cmd/web/main.go
+type application struct {
+    logger *slog.Logger
+}
+
+func main() {
+    app := &application{
+        logger: slog.New(slog.NewTextHandler(os.Stdout, nil)),
+    }
+    mux.HandleFunc("GET /{$}", app.home) // Updated handler registration
+}
+```
+
+```go
+// cmd/web/handlers.go
+func (app *application) home(w http.ResponseWriter, r *http.Request) {
+    ts, err := template.ParseFiles(files...)
+    if err != nil {
+        app.logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
+        http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+        return
+    }
+    // ... rest of handler
+}
+
+// All other handlers updated similarly:
+// func (app *application) snippetView(...)
+// func (app *application) snippetCreate(...)
+```
+
+**Alternative: Closure Approach**
+
+```go
+// package config
+type Application struct {
+    Logger *slog.Logger
+}
+
+// package foo
+func ExampleHandler(app *config.Application) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
         if err != nil {
-            log.Print(err.Error()) // Still using the standard logger.
-            http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-            return
+            app.Logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
+            // ...
         }
     }
-    ```
+}
 
-- **Question**: How can we make the structured logger (and other dependencies) available to handlers?
+// package main
+mux.Handle("/", foo.ExampleHandler(app))
+```
 
-- **Solution**:
-  - Avoid global variables.
-  - _Inject dependencies_ into handlers for better explicitness, testability, and reduced errors.
-    - Use a **custom application struct** to hold dependencies and define handlers as methods on this struct.
+- [This](https://gist.github.com/alexedwards/5cd712192b4831058b21) is a more concrete example.
 
-2. **Implementation**
+---
 
-**Define the Application Struct**
+**Example Code**
 
 **File: `cmd/web/main.go`**
 
@@ -1359,11 +967,37 @@ type application struct {
 }
 
 func main() {
-    ...
+    addr := flag.String("addr", ":4000", "HTTP network address")
+    flag.Parse()
+
+    logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+    // Initialize a new instance of our application struct, containing the
+    // dependencies (for now, just the structured logger).
+    app := &application{
+        logger: logger,
+    }
+
+    mux := http.NewServeMux()
+
+    fileServer := http.FileServer(http.Dir("./ui/static/"))
+    mux.Handle("GET /static/", http.StripPrefix("/static", fileServer))
+
+    // Swap the route declarations to use the application struct's methods as the
+    // handler functions.
+    mux.HandleFunc("GET /{$}", app.home)
+    mux.HandleFunc("GET /snippet/view/{id}", app.snippetView)
+    mux.HandleFunc("GET /snippet/create", app.snippetCreate)
+    mux.HandleFunc("POST /snippet/create", app.snippetCreatePost)
+
+
+    logger.Info("starting server", "addr", *addr)
+
+    err := http.ListenAndServe(*addr, mux)
+    logger.Error(err.Error())
+    os.Exit(1)
 }
 ```
-
-**Update Handlers to Use the Struct**
 
 **File: `cmd/web/handlers.go`**
 
@@ -1435,117 +1069,21 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 }
 ```
 
-**Wire Everything in `main.go`**
-
-**File: `cmd/web/main.go`**
-
-```go
-package main
-
-import (
-    "flag"
-    "log/slog"
-    "net/http"
-    "os"
-)
-
-type application struct {
-    logger *slog.Logger
-}
-
-func main() {
-    addr := flag.String("addr", ":4000", "HTTP network address")
-    flag.Parse()
-
-    logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-
-    // Initialize a new instance of our application struct, containing the
-    // dependencies (for now, just the structured logger).
-    app := &application{
-        logger: logger,
-    }
-
-    mux := http.NewServeMux()
-
-    fileServer := http.FileServer(http.Dir("./ui/static/"))
-    mux.Handle("GET /static/", http.StripPrefix("/static", fileServer))
-
-    // Swap the route declarations to use the application struct's methods as the
-    // handler functions.
-    mux.HandleFunc("GET /{$}", app.home)
-    mux.HandleFunc("GET /snippet/view/{id}", app.snippetView)
-    mux.HandleFunc("GET /snippet/create", app.snippetCreate)
-    mux.HandleFunc("POST /snippet/create", app.snippetCreatePost)
-
-
-    logger.Info("starting server", "addr", *addr)
-
-    err := http.ListenAndServe(*addr, mux)
-    logger.Error(err.Error())
-    os.Exit(1)
-}
-```
-
-3. **Closures for Dependency Injection**
-
-- Use closures if handlers are spread across multiple packages.
-- Example:
-
-  ```go
-  // package config
-
-  type Application struct {
-      Logger *slog.Logger
-  }
-  ```
-
-  ```go
-  // package foo
-
-  func ExampleHandler(app *config.Application) http.HandlerFunc {
-      return func(w http.ResponseWriter, r *http.Request) {
-          ...
-          ts, err := template.ParseFiles(files...)
-          if err != nil {
-              app.Logger.Error(err.Error(), "method", r.Method, "uri", r.URL.RequestURI())
-              http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-              return
-          }
-          ...
-      }
-  }
-  ```
-
-  ```go
-  // package main
-
-  func main() {
-      app := &config.Application{
-          Logger: slog.New(slog.NewTextHandler(os.Stdout, nil)),
-      }
-      ...
-      mux.Handle("/", foo.ExampleHandler(app))
-      ...
-  }
-  ```
-
-  - [This](https://gist.github.com/alexedwards/5cd712192b4831058b21) is a more concrete example.
-
-### Key Takeaways
-
-- Avoid global variables for dependencies; inject them instead.
-- **Dependency injection** makes code more explicit, testable, and maintainable.
-- Use a **custom application struct** to hold dependencies (e.g., logger, database connection).
-- Define handlers as methods on the struct to access dependencies.
-- For multi-package applications, use **closures** to inject dependencies into handlers.
-
 ## 3.4 Centralized error handling
 
-1. **Overview**
+**Key Notes:**
 
-- To improve code organization and reduce repetition, centralize error handling logic into helper methods.
+- `serverError` helper:
+  - Logs error with method, URI and stack trace
+  - Returns 500 response
+- `clientError` helper:
+  - Returns specific status code with standard text
+- `http.StatusText()` provides standard status descriptions
+- `debug.Stack()` captures stack trace for debugging
 
-2. **Implementation**
+---
+
+**Example Code**
 
 **File: `cmd/web/helpers.go`**
 
@@ -1614,71 +1152,33 @@ func (app *application) home(w http.ResponseWriter, r *http.Request) {
 ...
 ```
 
-- **Note**:
-  - `http.StatusText()` provides human-readable descriptions for HTTP status codes (e.g., `400` → `"Bad Request"`).
-  - Use `debug.Stack()` to include a stack trace in log entries for better debugging. This returns a byte slice, which we need to convert to a string so that it's readable in the log entry.
-    ```go
-    var trace  = string(debug.Stack())
-    ```
-
-### Key Takeaways
-
-- **Centralized error handling** reduces code duplication and improves maintainability.
-- Use helper methods like `serverError` and `clientError` to handle errors consistently.
-- Log errors with context (e.g., HTTP method, URI) for easier debugging.
-- Include **stack traces** with `debug.Stack()` in logs for detailed debugging information.
-- Use `http.StatusText()` to provide human-readable HTTP status descriptions.
-
 ## 3.5 Isolating the application routes
 
-1. **Overview**
+**Improved Code Organization**
 
-- To improve code organization, make `main()` only focused on:
+- Make `main()` only focused on:
 
-  - Parsing runtime configuration.
+  ```go
+  // 1. Config parsing
+  addr := flag.String("addr", ":4000", "HTTP network address")
+  flag.Parse()
 
-    ```go
-    addr := flag.String("addr", ":4000", "HTTP network address")
-    flag.Parse()
-    ```
+  // 2. Dependency setup
+  app := &application{
+      logger: slog.New(slog.NewTextHandler(os.Stdout, nil)),
+  }
 
-  - Establishing dependencies.
+  // 3. Server execution
+  err := http.ListenAndServe(*addr, app.routes())
+  ```
 
-    ```go
-    app := &application{
-        logger: logger,
-    }
-    ```
+**Key Notes:**
 
-  - Running the HTTP server.
-    ```go
-    err := http.ListenAndServe(*addr, app.routes())
-    ```
+- `ListenAndServe` should accept a `*ServeMux` containing all routes
 
-2. **Implementation**
+---
 
-**File: `cmd/web/routes.go`**
-
-```go
-package main
-
-import "net/http"
-
-// The routes() method returns a servemux containing our application routes.
-func (app *application) routes() *http.ServeMux {
-    mux := http.NewServeMux()
-
-    fileServer := http.FileServer(http.Dir("./ui/static/"))
-    mux.Handle("GET /static/", http.StripPrefix("/static", fileServer))
-
-    mux.HandleFunc("GET /{$}", app.home)
-    mux.HandleFunc("GET /snippet/view/{id}", app.snippetView)
-    mux.HandleFunc("GET /snippet/create", app.snippetCreate)
-    mux.HandleFunc("POST /snippet/create", app.snippetCreatePost)
-
-    return mux
-}
-```
+**Example Code**
 
 **File: `cmd/web/main.go`**
 
@@ -1707,139 +1207,152 @@ func main() {
 }
 ```
 
-### Key Takeaways
+**File: `cmd/web/routes.go`**
 
-- Isolate route declarations in a separate `routes.go` file for better organization.
-  - Use a `routes()` method on the `application` struct to return a `*ServeMux` containing all routes.
-- Keep the `main()` function focused on configuration, dependency setup, and server startup.
+```go
+package main
+
+import "net/http"
+
+// The routes() method returns a servemux containing our application routes.
+func (app *application) routes() *http.ServeMux {
+    mux := http.NewServeMux()
+
+    fileServer := http.FileServer(http.Dir("./ui/static/"))
+    mux.Handle("GET /static/", http.StripPrefix("/static", fileServer))
+
+    mux.HandleFunc("GET /{$}", app.home)
+    mux.HandleFunc("GET /snippet/view/{id}", app.snippetView)
+    mux.HandleFunc("GET /snippet/create", app.snippetCreate)
+    mux.HandleFunc("POST /snippet/create", app.snippetCreatePost)
+
+    return mux
+}
+```
 
 # Chapter 4: Database-driven responses
 
 ## 4.3 Modules and reproducible builds
 
-1. **Overview**
+**Go Modules Overview**
 
-- Go modules ensure reproducible builds by specifying exact versions of dependencies.
-- The `go.mod` and `go.sum` files work together to manage dependencies and verify their integrity.
+- Uses `go.mod` and `go.sum` for dependency management
+- Ensures reproducible builds with exact versions
 
-2. **The `go.sum` File**
+**The go.mod File**
 
-- The `go.mod` file lists the module path, Go version, and dependencies with their exact versions.
+```plaintext
+module snippetbox.libra.dev
+go 1.24.1
 
-- Example:
+require (
+  github.com/jackc/pgx/v5 v5.7.3 // indirect
+  golang.org/x/crypto v0.31.0 // indirect
+)
+```
+- Specifies module path, Go version, and dependencies
+- `// indirect` marks transitive dependencies
+- Projects can use different versions without conflicts
 
-  ```plaintext
-  module snippetbox.libra.dev
+**The go.sum File**
 
-  go 1.24.1
+```plaintext
+github.com/jackc/pgx/v5 v5.7.3 h1:...
+github.com/jackc/pgx/v5 v5.7.3/go.mod h1:...
+```
+- Contains cryptographic checksums
+- Verifies downloaded package integrity
 
-  require (
-    github.com/jackc/pgpassfile v1.0.0 // indirect
-    github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-    github.com/jackc/pgx/v5 v5.7.3 // indirect
-    golang.org/x/crypto v0.31.0 // indirect
-    golang.org/x/text v0.21.0 // indirect
-  )
-  ```
+**Dependency Commands**
 
-- **Key Points**:
-  - The `require` block specifies the exact versions of dependencies.
-  - Commands like `go run`, `go test`, and `go build` use the versions listed in `go.mod`.
-  - The `// indirect` annotation indicates that the package is not directly imported in the codebase.
-  - Different projects can use different versions of the same package without conflicts.
+```bash
+go mod verify    # Check package integrity
+go mod download  # Download all dependencies
+go mod tidy      # Clean unused dependencies
+```
 
-3. **The `go.sum` File**
+**Updating Dependencies**
 
-- The `go.sum` file contains cryptographic checksums for the required packages.
-
-- Example:
-
-  ```plaintext
-  github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-  github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
-  github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
-  github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
-  ...
-  ```
-
-- **Purpose**:
-  - Ensures the integrity of downloaded packages.
-  - Verifies that the content of dependencies matches the checksums in `go.sum`.
-
-4. **Verifying and Downloading Dependencies**
-
-- Use `go mod verify` to ensure the downloaded packages match the checksums in `go.sum`.
-
-  ```bash
-  $ go mod verify
-  all modules verified
-  ```
-
-- Use `go mod download` to download all dependencies listed in `go.mod`.
-
-5. **Managing Dependencies**
-
-- Use `go get -u` to upgrade to the latest minor or patch release.
-
-  ```bash
-  $ go get -u github.com/foo/bar
-  ```
-
-- Use `go get` with the `@version` suffix to upgrade to a specific version.
-
-  ```bash
-  $ go get github.com/foo/bar@v1.2.3
-  ```
-
-- Use `go get` with the `@none` suffix to remove a specific package.
-
-  ```bash
-  $ go get github.com/foo/bar@none
-  ```
-
-- Use `go mod tidy` to automatically remove any unused packages from `go.mod` and `go.sum` files.
-  ```bash
-  $ go mod tidy
-  ```
-
-### Key Takeaways
-
-- **`go.mod`** specifies the module path, Go version, and dependencies.
-- **`go.sum`** ensures the integrity of dependencies using cryptographic checksums.
-- Use **`go mod verify`** to verify the integrity of downloaded packages.
-- Use **`go mod download`** to download exact versions of dependencies.
-- Commands like **`go run`**, **`go test`**, and **`go build`** use the versions listed in `go.mod`.
-- Upgrade dependencies with **`go get -u`** or **`go get @version`**.
-- Remove unused dependencies with **`go get @none`** or **`go mod tidy`**.
-- Go modules enable **reproducible builds** by ensuring consistent dependency versions across environments.
+```bash
+go get -u github.com/foo/bar  # Upgrade to latest
+go get foo/bar@v1.2.3         # Specific version
+go get foo/bar@none           # Remove dependency
+```
 
 ## 4.4 Creating a database connection pool
 
-1. **Using `sql.Open()`**
+**Using `sql.Open()`**
 
-- **Syntax**:
-
-  ```go
-  db, err := sql.Open("pgx", "postgres://username:password@host:port/dbname?param1=value1&param2=value2")
-  if err != nil {
-      ...
-  }
-  ```
+```go
+db, err := sql.Open("pgx", "postgres://user:pass@host:port/db?param1=value1&param2=value2")
+if err != nil {
+    ...
+}
+```
 
 - **Parameters**:
+  - Driver name (e.g., `"pgx"`)
+  - Data Source Name (DSN) string
+    - MySQL tip: Add `parseTime=true` for `time.Time` conversion
 
-  - `"pgx"`: The driver name.
-  - `"postgres://username:password@host:port/dbname?param1=value1&param2=value2"`: The **Data Source Name (DSN)**.
-    - If you are using MYSQL, `parseTime=true`: Converts SQL `TIME` and `DATE` fields to Go `time.Time`.
+- **Key behavior**:
+  - Creates a connection pool, not single connection
+  - Thread-safe for concurrent use
+  - Designed for long-lived usage (initialize once in `main()`)
 
-- **Key Points**:
-  - `sql.DB` is a **connection pool**, not a single connection.
-    - Go manages connections automatically (opens/closes as needed).
-  - The pool is **safe for concurrent access**.
-  - The connection pool is intended to be long-lived.
-    - Initialize the pool in `main()` and pass it to handlers (do not open/close in handlers).
+**Implementation Example**
 
-2. **Implementation**
+```go
+import (
+    "database/sql"
+	...
+
+    _ "github.com/jackc/pgx/v5/stdlib"
+)
+
+func main() {
+    dsn := flag.String("dsn", "postgres://...", "PostgreSQL DSN")
+    db, err := openDB(*dsn)
+    defer db.Close()
+    ...
+}
+
+func openDB(dsn string) (*sql.DB, error) {
+    db, err := sql.Open("pgx", dsn)
+    if err != nil {
+        return nil, err
+    }
+
+    if err := db.Ping(); err != nil {
+        db.Close()
+        return nil, err
+    }
+    return db, nil
+}
+```
+
+**Key Implementation Notes**:
+- Use blank import for driver: `_ "github.com/jackc/pgx/v5/stdlib"`
+- `Ping()` verifies working connection
+- `defer db.Close()` for cleanup (good practice)
+
+**Common Issues**:
+- Missing dependencies may require:
+  ```bash
+  go mod tidy
+  # or
+  go get github.com/jackc/pgx/v5/pgxpool@v5.7.3
+  ```
+
+**Testing**:
+```bash
+go run ./cmd/web
+# Should show server start message
+```
+
+---
+
+**Example Code**
 
 **File: `cmd/web/main.go`**
 
@@ -1910,87 +1423,62 @@ func openDB(dsn string) (*sql.DB, error) {
     return db, nil
 ```
 
-**Key Points**
-
-- **Blank Identifier (`_`) for Driver Import**:
-
-  - The `github.com/jackc/pgx/v5/stdlib` package is imported with a blank identifier (`_`) because the driver's `init()` function must run to register itself with `database/sql`.
-  - The Go compiler raises an error if the package is imported but not used directly.
-
-- **`db.Ping()`**:
-
-  - Verifies the connection by creating a connection to the database.
-  - Ensures the DSN is correct and the database is accessible.
-
-- **`defer db.Close()`**:
-  - Ensures the connection pool is closed when the application exits.
-  - While not strictly necessary in this example (since `os.Exit()` or `Ctrl+C` skips deferred functions), it's a good habit for future extensibility (e.g., graceful shutdown).
-
-3. **Testing the Connection**
-
-```bash
-$ go run ./cmd/web
-time=2025-03-23T17:32:08.513+08:00 level=INFO msg="starting server" addr=:4000
-```
-
-4. **Tidying `go.mod`**
-
-- Run `go mod tidy` to tidy your `go.mod` file and remove unnecessary `// indirect` annotations.
-
-### Gotch in `pgx`
-
-- Download the latest version of `pgx` with:
-
-  ```bash
-  go get github.com/jackc/pgx/v5
-  ```
-
-- `go.mod` file after `go get`:
-
-  ```plaintext
-  module snippetbox.libra.dev
-
-  go 1.24.1
-
-  require (
-    github.com/jackc/pgpassfile v1.0.0 // indirect
-    github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-    github.com/jackc/pgx/v5 v5.7.3 // indirect
-    golang.org/x/crypto v0.31.0 // indirect
-    golang.org/x/text v0.21.0 // indirect
-  )
-  ```
-
-- But `go run` outputs the following error:
-
-  ```bash
-  $ go run ./cmd/web
-  missing go.sum entry for module providing package github.com/jackc/puddle/v2 (imported by github.com/jackc/pgx/v5/pgxpool); to add:
-          go get github.com/jackc/pgx/v5/pgxpool@v5.7.3
-  ```
-
-- **Solutions**:
-  ```bash
-  go mod tidy
-  ```
-  or
-  ```bash
-  go get github.com/jackc/pgx/v5/pgxpool@v5.7.3
-  ```
-
-### Key Takeaways
-
-- Use `sql.Open()` to initialize a **connection pool** (`sql.DB`).
-- The connection pool is **long-lived** and **safe for concurrent access**.
-- Initialize the pool in `main()` and pass it to handlers.
-- Import the driver with a **blank identifier** (`_`) to ensure its `init()` function runs.
-- Use `db.Ping()` to verify the connection.
-- Always close the pool with `defer db.Close()`.
-- Use `go mod tidy` to clean up `go.mod` and remove unnecessary `// indirect` annotations.
-
 ## 4.5 Designing a database model
 
-1. **Creating the Database Model**
+**Database Model Structure**
+
+```go
+// internal/models/snippets.go
+type Snippet struct {
+    ID      int
+    Title   string
+    Content string
+    Created time.Time
+    Expires time.Time
+}
+
+type SnippetModel struct {
+    DB *sql.DB
+}
+
+func (m *SnippetModel) Insert(title, content string, expires int) (int, error) {}
+func (m *SnippetModel) Get(id int) (Snippet, error) {}
+func (m *SnippetModel) Latest() ([]Snippet, error) {}
+```
+
+**Integration in Application**
+
+```go
+// cmd/web/main.go
+type application struct {
+    logger   *slog.Logger
+    snippets *models.SnippetModel
+}
+
+func main() {
+    db := openDB(*dsn)
+    app := &application{
+        logger: logger,
+        snippets: &models.SnippetModel{DB: db},
+    }
+}
+```
+
+**Key Benefits**
+- Clear separation between database and HTTP logic
+- Self-contained database operations in `SnippetModel`
+- Easy mocking for testing
+- Runtime database configuration via DSN flag
+
+**Implementation Notes**
+
+- Model methods match database operations (CRUD)
+- Application struct holds model instance
+- Connection pool passed to model during initialization
+
+---
+
+**Example Code**
 
 **File: `internal/models/snippets.go`**
 
@@ -2034,8 +1522,6 @@ func (m *SnippetModel) Latest() ([]Snippet, error) {
     return nil, nil
 }
 ```
-
-2. **Using the `SnippetModel` in the Application**
 
 **File: `cmd/web/main.go`**
 
@@ -2096,67 +1582,72 @@ func main() {
 ...
 ```
 
-3. **Benefits of This Structure**
-
-- **Separation of Concerns**:
-
-  - Database logic is decoupled from HTTP handlers.
-  - Handlers focus on HTTP tasks (e.g., request validation, response writing).
-
-- **Encapsulation**:
-
-  - The `SnippetModel` encapsulates database operations in a single, reusable object.
-
-- **Testability**:
-
-  - The model can be easily mocked for unit testing.
-
-- **Runtime Flexibility**:
-
-  - We have total control over which database is used at runtime, just by using the -dsn command-line flag.
-
-### Key Takeaways
-
-- Use a **database model** to encapsulate database logic and separate concerns.
-- Define a `Snippet` struct to represent individual snippets.
-- Create a `SnippetModel` struct with methods for database operations (`Insert`, `Get`, `Latest`).
-- Inject the `SnippetModel` into the `application` struct for use in handlers.
-- Benefits include **separation of concerns**, **encapsulation**, **testability**, and **runtime flexibility**.
-
 ## 4.6 Executing SQL statements
 
-**NOTE: This chapter uses MYSQL as the database, and the identical postgresql example is in the end.**
+**Query Methods**
 
-1. **Executing SQL Queries in Go**
+- `DB.Query()`: For `SELECT` returning multiple rows
+- `DB.QueryRow()`: For `SELECT` returning single row
+- `DB.Exec()`: For non-row-returning statements (`INSERT/UPDATE/DELETE`)
 
-- Methods for Executing Queries
+**Using DB.Exec()**
 
-  - **`DB.Query()`**: Used for `SELECT` queries that return multiple rows.
-  - **`DB.QueryRow()`**: Used for `SELECT` queries that return a single row.
-  - **`DB.Exec()`**: Used for statements that don’t return rows (e.g., `INSERT`, `DELETE`).
+```go
+result, err := db.Exec(query, args...)
+// Or ignore result:
+_, err := db.Exec(query, args...)
+```
+- Returns `sql.Result` with:
+  - `LastInsertId()` (not supported in PostgreSQL)
+  - `RowsAffected()`
 
-- Using `DB.Exec()` to insert a new record:
+**MySQL Implementation**
+```go
+// models/snippets.go
+func (m *SnippetModel) Insert(title, content string, expires int) (int, error) {
+    stmt := `INSERT INTO snippets (title, content, created, expires)
+             VALUES(?, ?, UTC_TIMESTAMP(), DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? DAY))`
 
-  - **Syntax**:
+    result, err := m.DB.Exec(stmt, title, content, expires)
+    id, err := result.LastInsertId()
+    return int(id), err
+}
 
-    ```go
-    result, err := db.Exec(query, args...)
-    ```
+// handlers.go
+func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request) {
+    id, err := app.snippets.Insert("Title", "Content", 7)
+    http.Redirect(w, r, fmt.Sprintf("/snippet/view/%d", id), http.StatusSeeOther)
+}
+```
 
-  - **Returns**:
+**PostgreSQL Differences**
+```go
+func (m *SnippetModel) Insert(title, content string, expires int) (int, error) {
+    stmt := `INSERT INTO snippets (title, content, created, expires)
+             VALUES($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '1 day' * $3)
+             RETURNING id`
 
-    - A `sql.Result` object containing:
-      - `LastInsertId()`: The ID (an `int64`) of the newly inserted row.
-      - `RowsAffected()`: The number of rows (an `int64`) affected by the query.
+    var id int
+    err := m.DB.QueryRow(stmt, title, content, expires).Scan(&id)
+    return id, err
+}
+```
+- Uses `$1,$2,$3` placeholders
+- `RETURNING` clause + `QueryRow().Scan()` to get ID
+- Different timestamp handling
 
-  - **Note**:
-    - Not all drivers and databases support the `LastInsertId()` and `RowsAffected()` methods. For example, `LastInsertId()` is not supported by PostgreSQL.
-    - it is common to ignore the `sql.Result` return value if you don’t need it.
-      ```go
-      _, err := db.Exec(query, args...)
-      ```
+**Key Notes**
+- Always use placeholder parameters (`?` or `$N`) to prevent SQL injection
+- MySQL uses `?` placeholders, PostgreSQL uses `$1,$2,...`
+- PostgreSQL doesn't support `LastInsertId()` - use `RETURNING` instead
+- Test with curl:
+  ```bash
+  curl -iL -d "" http://localhost:4000/snippet/create
+  ```
 
-2. **Implementation**
+---
+
+**Example Code**
 
 **File: `internal/models/snippets.go`**
 
@@ -2229,96 +1720,61 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 }
 ```
 
-- Testing: Use `curl` to make a `POST /snippet/create` request:
+## 4.7 Single-record SQL queries
 
-  ```bash
-  $ curl -iL -d "" http://localhost:4000/snippet/create
-  HTTP/1.1 303 See Other
-  Location: /snippet/view/4
-  Date: Wed, 18 Mar 2024 11:29:23 GMT
-  Content-Length: 0
+**Querying Single Rows**
+```go
+// models/snippets.go
+func (m *SnippetModel) Get(id int) (Snippet, error) {
+    stmt := `SELECT id, title, content, created, expires
+             FROM snippets
+             WHERE expires > UTC_TIMESTAMP() AND id = ?`
 
-  HTTP/1.1 200 OK
-  Date: Wed, 18 Mar 2024 11:29:23 GMT
-  Content-Length: 39
-  Content-Type: text/plain; charset=utf-8
+    var s Snippet
+    err := m.DB.QueryRow(stmt, id).Scan(&s.ID, &s.Title, &s.Content, &s.Created, &s.Expires)
 
-  Display a specific snippet with ID 4...
-  ```
+    if errors.Is(err, sql.ErrNoRows) {
+        return Snippet{}, ErrNoRecord
+    }
+    return s, err
+}
 
-3. **Placeholder Parameters**
+// models/errors.go
+var ErrNoRecord = errors.New("models: no matching record found")
 
-- **Purpose**: Prevent SQL injection by separating SQL code from data.
-- **Syntax**:
-  - MySQL, SQL Server, SQLite: `?`
-  - PostgreSQL: `$1`, `$2`, etc.
+// handlers.go
+func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
+    id, _ := strconv.Atoi(r.PathValue("id"))
+    snippet, err := app.snippets.Get(id)
 
-4. **How `DB.Exec()` Works**
+    if errors.Is(err, models.ErrNoRecord) {
+        http.NotFound(w, r)
+        return
+    }
+    fmt.Fprintf(w, "%+v", snippet)
+}
+```
 
-- Creates a prepared statement on the database.
-- Passes parameter values to the database for execution.
-- Closes (or deallocates) the prepared statement.
+**Key Points**
+- Use `QueryRow()` for single-row queries
+- `Scan()` copies column values to struct fields
+- Handle `sql.ErrNoRows` with custom error
+- MySQL requires `parseTime=true` for time conversions
 
-### Key Takeaways
+**PostgreSQL Differences**
 
-**(MYSQL as the database)**
+```go
+stmt := `SELECT ... WHERE expires > CURRENT_TIMESTAMP AND id = $1`
+```
 
-- Use **`DB.QueryRow()`** for single-row `SELECT` queries.
-- Use **`DB.Query()`** for multi-row `SELECT` queries.
-- Use **`DB.Exec()`** for `INSERT`, `UPDATE`, and `DELETE` queries.
-- Use **placeholder parameters** (`?`) to safely insert untrusted data.
-- **`sql.Result`** provides methods like `LastInsertId()` and `RowsAffected()`.
-- Retrieve the ID of a newly inserted record with **`LastInsertId()`**.
-- Redirect the user to the new snippet's page after insertion.
+**Error Handling**
+
+- Prefer `errors.Is()` over `==` for error checking because it handles wrapped errors
+- Encapsulate the model and avoid exposing datastore-specific errors (e.g., `sql.ErrNoRows`) to handlers
 
 ---
 
-### **POSTGRESQL IMPLEMENTATION**
-
-**File: `internal/models/snippets.go`**
-
-```go
-package models
-
-...
-
-type SnippetModel struct {
-    DB *sql.DB
-}
-
-func (m *SnippetModel) Insert(title string, content string, expires int) (int, error) {
-	stmt := `
-        INSERT INTO snippets (title, content, created, expires)
-        VALUES($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP + INTERVAL '1 day' * $3)
-        RETURNING id
-    `
-
-	var id int
-	err := m.DB.QueryRow(stmt, title, content, expires).Scan(&id)
-	if err != nil {
-		return 0, err
-	}
-
-	return id, nil
-}
-
-...
-```
-
-- `CURRENT_TIMESTAMP` is the function in PostgreSQL to get the current timestamp.
-- `CURRENT_TIMESTAMP + INTERVAL '1 day' * $3` is used to calculate the expiration time.
-
-- PostgreSQL uses `$1, $2, $3, ...` instead of `?` as placeholders.
-
-- PostgreSQL supports the `RETURNING` clause to return field values (e.g., `id`) of the inserted row.
-- `QueryRow` and `Scan` are used to fetch the returned `id`.
-- To store the returned `id`, pass a pointer.
-
-## 4.7 Single-record SQL queries
-
-**NOTE: This chapter uses MYSQL as the database, and the identical postgresql example is in the end.**
-
-1. **Implementation**
+**Example Code**
 
 **File: `internal/models/snippets.go`**
 
@@ -2430,82 +1886,68 @@ func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
 ...
 ```
 
-- Use `DB.QueryRow()` to execute the query and retrieve a single row.
-- Use `row.Scan()` to copy the row data into a `Snippet` struct.
-- Handle the `sql.ErrNoRows` error by returning a custom `ErrNoRecord` error.
-- Shorthand single-record queries:
+## 4.8 Multiple-record SQL queries
 
-  ```go
-  ...
+**Querying Multiple Rows**
 
-  var s Snippet
-  err := m.DB.QueryRow("SELECT ...", id).Scan(&s.ID, &s.Title, &s.Content, &s.Created, &s.Expires)
+```go
+// models/snippets.go
+func (m *SnippetModel) Latest() ([]Snippet, error) {
+    stmt := `SELECT id, title, content, created, expires
+             FROM snippets
+             WHERE expires > UTC_TIMESTAMP()
+             ORDER BY id DESC LIMIT 10`
 
-  ...
-  ```
+    rows, err := m.DB.Query(stmt)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close() // Critical for connection management
 
-2. `row.Scan()` under the hood
+    var snippets []Snippet
+    for rows.Next() {
+        var s Snippet
+        if err := rows.Scan(&s.ID, &s.Title, &s.Content, &s.Created, &s.Expires); err != nil {
+            return nil, err
+        }
+        snippets = append(snippets, s)
+    }
 
-- Behind the scenes of `rows.Scan()` your driver will automatically convert the raw output from the SQL database to the required native Go types.
+    if err := rows.Err(); err != nil {
+        return nil, err
+    }
+    return snippets, nil
+}
 
-- MYSQL (`go-sql-driver`)
+// handlers.go
+func (app *application) home(w http.ResponseWriter, r *http.Request) {
+    snippets, err := app.snippets.Latest()
+    if err != nil {
+        app.serverError(w, r, err)
+        return
+    }
 
-  - In MYSQL, we need to use the `parseTime=true` parameter to force it to convert `TIME` and `DATE` fields to `time.Time`. Otherwise it returns these as `[]byte` objects.
+    for _, s := range snippets {
+        fmt.Fprintf(w, "%+v\n", s)
+    }
+}
+```
 
-  - `CHAR`, `VARCHAR`, `TEXT` → `string`.
-  - `BOOLEAN` → `bool`.
-  - `INT` → `int`; `BIGINT` → `int64`.
-  - `DECIMAL`, `NUMERIC` → `float`.
-  - `TIME`, `DATE`, `TIMESTAMP` → `time.Time`.
+**Key Points**
 
-- PostgreSQL (`pgx`)
-  - `CHAR`, `VARCHAR`, `TEXT` → `string`.
-  - `BOOLEAN` → `bool`.
-  - `INT` → `int`; `SMALLINT` → `int16`;`BIGINT` → `int64`.
-  - `REAL` → `float32`; `DOUBLE PRECISION` → `float64`; `DECIMAL`, `NUMERIC` → `float64`
-  - `TIME`, `DATE`, `TIMESTAMP`, `TIMESTAMPTZ` → `time.Time`.
-  - `BYTEA` → `[]byte`.
-  - `JSON`, `JSONB` → `[]byte`.
-  - `INT[]`, `TEXT[]`, etc. → `[]int`, `[]string`, etc.
+1. Always `defer rows.Close()` immediately after checking query error
+2. Process rows with `rows.Next()`/`rows.Scan()` loop
+3. Check for iteration errors with `rows.Err()`
 
-3. **Why Use `ErrNoRecord`?**
+**PostgreSQL Differences**
 
-- Encapsulate the model and avoid exposing datastore-specific errors (e.g., `sql.ErrNoRows`) to handlers.
-
-4. Error Handling with `errors.Is()`
-
-- Use `errors.Is()` to check for specific errors (e.g., `sql.ErrNoRows`).
-- This is safer than using `==` because it handles wrapped errors introduced in Go 1.13.
-
-### Key Takeaways
-
-- Use **`DB.QueryRow()`** for single-row `SELECT` queries.
-- Use **`row.Scan()`** to copy row data into a struct.
-- Handle **`sql.ErrNoRows`** by returning a custom `ErrNoRecord` error.
-- Use **`errors.Is()`** to check for specific errors (e.g., `ErrNoRecord`).
-- Encapsulate the model to avoid exposing datastore-specific errors to handlers.
+```go
+stmt := `SELECT ... WHERE expires > CURRENT_TIMESTAMP ...`
+```
 
 ---
 
-### **POSTGRESQL IMPLEMENTATION**
-
-**File: `internal/models/snippets.go`**
-
-```go
-...
-
-stmt := `SELECT id, title, content, created, expires FROM snippets
-    	WHERE expires > CURRENT_TIMESTAMP AND id = $1
-	`
-
-...
-```
-
-## 4.8 Multiple-record SQL queries
-
-**NOTE: This chapter uses MYSQL as the database, and the identical postgresql example is in the end.**
-
-**Implementation**
+**Example Code**
 
 **File: `internal/models/snippets.go`**
 
@@ -2620,1427 +2062,316 @@ func (app *application) home(w http.ResponseWriter, r *http.Request) {
 ...
 ```
 
-**Key Points**
+## 4.9 Transactions and other details
 
-- Use `DB.Query()` to execute the query and retrieve a result set.
+**`database/sql` Package**
 
-- **Closing the Result Set**
+- Works with any SQL database (MySQL, PostgreSQL, SQLite)
+- Each driver may have specific behaviors - check documentation
 
-  - As long as a resultset is open it will keep the underlying database connection open.
-  - Always close the result set with `defer rows.Close()` to free up the database connection.
-  - Failure to close the result set can exhaust the connection pool.
+**Handling NULL Values**
 
-- **Iterating Over the Result Set**
+- Go does not handle `NULL` values in database records well by default
 
-  - Use `rows.Next()` to iterate over the rows in the result set.
-  - Use `rows.Scan()` to copy row data into a struct.
+```go
+// Solution 1: sql.Null*
+type Book struct {
+    Isbn  string
+    Title  sql.NullString  // For nullable string fields
+    Author sql.NullString
+    Price  sql.NullFloat64 // For nullable numeric fields
+}
 
-- **Error Handling**
-  - Check for errors after iteration using `rows.Err()`.
+...
 
-### Key Takeaways
+for _, bk := range bks {
+  var price string
+  // Check validity before use:
+  if bk.Price.Valid {
+    price = fmt.Sprintf("£%.2f", bk.Price.Float64)
+  } else {
+    price = "PRICE NOT SET"
+  }
+  fmt.Printf("%s, %s, %s, %s\n", bk.Isbn, bk.Title.String, bk.Author.String, price)
+}
 
-- Use **`DB.Query()`** for `SELECT` queries that return multiple rows.
-- Iterate over the result set with **`rows.Next()`** and **`rows.Scan()`**.
-- Always close the result set with **`defer rows.Close()`**.
-- Always call **`rows.Err()`** to retrieve any error that was encountered during the iteration after the `rows.Next()` loop.
+// Should output:
+
+// 978-1503261969, Emma, Jayne Austen, £9.44
+// 978-1514274873, Journal of a Soldier, , £5.49
+// 978-1503379640, The Prince, Niccolò Machiavelli, PRICE NOT SET
+```
+
+```go
+// Solution 2: database constraints
+CREATE TABLE books (
+    isbn    char(14) NOT NULL,
+    title   varchar(255),
+    author  varchar(255),
+    price   decimal(5,2)
+);
+
+INSERT INTO books (isbn, title, author, price) VALUES
+    ('978-1503261969', 'Emma', 'Jayne Austen', 9.44),
+    ('978-1514274873', 'Journal of a Soldier', NULL, 5.49),
+    ('978-1503379640', 'The Prince', 'Niccolò Machiavelli', NULL);
+```
+
+Full example [here](https://gist.github.com/alexedwards/dc3145c8e2e6d2fd6cd9).
+
+**Transactions**
+
+- Use transactions for atomic operations
+
+```go
+func (m *Model) TransferFunds() error {
+    tx, err := m.DB.Begin()
+    defer tx.Rollback() // Safety net
+
+    _, err = tx.Exec("UPDATE accounts SET balance = balance - 100 WHERE id = 1")
+    _, err = tx.Exec("UPDATE accounts SET balance = balance + 100 WHERE id = 2")
+
+    return tx.Commit() // Or error will trigger Rollback
+}
+```
+
+Key points:
+
+- Always call Rollback or Commit
+- Use same tx for all operations in transaction
+
+**Prepared Statements**
+
+- Prepared statements improve performance for repeated queries
+
+```go
+type UserModel struct {
+    DB        *sql.DB
+    InsertStmt *sql.Stmt
+}
+
+func NewUserModel(db *sql.DB) (*UserModel, error) {
+    stmt, err := db.Prepare("INSERT INTO users(...) VALUES(...)")
+    return &UserModel{DB: db, InsertStmt: stmt}, err
+}
+
+func (m *UserModel) Insert(user User) error {
+    _, err := m.InsertStmt.Exec(user.Name, user.Email)
+    return err
+}
+```
+
+Key points:
+
+- Prepare during app startup
+- Close statements on shutdown
+- Only use for frequently repeated queries (Under heavy load, statements may be re-prepared on different connections, reducing performance gains)
 
 ---
 
-### **POSTGRESQL IMPLEMENTATION**
-
-**File: `internal/models/snippets.go`**
+**Example Code**
 
 ```go
-...
+type ExampleModel struct {
+    DB *sql.DB
+}
 
-stmt := `SELECT id, title, content, created, expires FROM snippets
-    	WHERE expires > CURRENT_TIMESTAMP ORDER BY id DESC LIMIT 10
-	`
-
-...
-```
-
-## 4.9 Transactions and other details
-
-### The `database/sql` Package
-
-- **Portability**: The `database/sql` package allows Go code to work with any SQL database (e.g., MySQL, PostgreSQL, SQLite).
-
-- **Driver-Specific Quirks**: While the package standardizes interactions, drivers and databases may have unique behaviors. Always review the driver documentation.
-
-### Verbosity in Go SQL Code
-
-- Go's SQL code can feel verbose compared to ORMs in languages like Ruby, Python, or PHP.
-
-- **Advantages**:
-
-  - **Transparency**: Code is explicit and non-magical.
-  - **Control**: Developers have full control over SQL queries and behavior.
-
-- **Tools**:
-  - Use libraries like [`jmoiron/sqlx`](https://github.com/jmoiron/sqlx) or [`blockloop/scan`](https://github.com/blockloop/scan) to reduce verbosity.
-
-### Managing `NULL` Values
-
-- Go does not handle `NULL` values in database records well by default.
-
-- **Problem**:
-
-  - Scanning a `NULL` value into a `string` results in an error:
-    ```bash
-    sql: Scan error on column index 1: unsupported Scan, storing driver.Value type <nil> into type *string
-    ```
-
-- **Solution**:
-
-  - Use `sql.NullString` (or similar types like `sql.NullInt64`, `sql.NullBool`, etc.) for nullable fields.
-  - Alternatively, avoid `NULL` values by setting `NOT NULL` constraints and providing default values on all database columns.
-
-- **Example**:
-
-  ```sql
-  CREATE TABLE books (
-      isbn    char(14) NOT NULL,
-      title   varchar(255),
-      author  varchar(255),
-      price   decimal(5,2)
-  );
-
-  INSERT INTO books (isbn, title, author, price) VALUES
-      ('978-1503261969', 'Emma', 'Jayne Austen', 9.44),
-      ('978-1514274873', 'Journal of a Soldier', NULL, 5.49),
-      ('978-1503379640', 'The Prince', 'Niccolò Machiavelli', NULL);
-  ```
-
-  ```go
-  type Book struct {
-      Isbn  string
-      Title  sql.NullString
-      Author sql.NullString
-      Price  sql.NullFloat64
-  }
-
-  // 1. Connect to the database
-  // 2. Query rows
-  // 3. Scan rows into Book structs
-  ...
-
-  for _, bk := range bks {
-    var price string
-    if bk.Price.Valid {
-      price = fmt.Sprintf("£%.2f", bk.Price.Float64)
-    } else {
-      price = "PRICE NOT SET"
+func (m *ExampleModel) ExampleTransaction() error {
+    // Calling the Begin() method on the connection pool creates a new sql.Tx
+    // object, which represents the in-progress database transaction.
+    tx, err := m.DB.Begin()
+    if err != nil {
+        return err
     }
-    fmt.Printf("%s, %s, %s, %s\n", bk.Isbn, bk.Title.String, bk.Author.String, price)
-  }
 
-  // Should output:
+    // Defer a call to tx.Rollback() to ensure it is always called before the
+    // function returns. If the transaction succeeds it will be already be
+    // committed by the time tx.Rollback() is called, making tx.Rollback() a
+    // no-op. Otherwise, in the event of an error, tx.Rollback() will rollback
+    // the changes before the function returns.
+    defer tx.Rollback()
 
-  // 978-1503261969, Emma, Jayne Austen, £9.44
-  // 978-1514274873, Journal of a Soldier, , £5.49
-  // 978-1503379640, The Prince, Niccolò Machiavelli, PRICE NOT SET
-  ```
+    // Call Exec() on the transaction, passing in your statement and any
+    // parameters. It's important to notice that tx.Exec() is called on the
+    // transaction object just created, NOT the connection pool. Although we're
+    // using tx.Exec() here you can also use tx.Query() and tx.QueryRow() in
+    // exactly the same way.
+    _, err = tx.Exec("INSERT INTO ...")
+    if err != nil {
+        return err
+    }
 
-  Full example [here](https://gist.github.com/alexedwards/dc3145c8e2e6d2fd6cd9).
+    // Carry out another transaction in exactly the same way.
+    _, err = tx.Exec("UPDATE ...")
+    if err != nil {
+        return err
+    }
 
-### Working with Transactions
-
-- **Purpose**: Ensure multiple SQL statements use the same database connection and execute atomically.
-
-- **Pattern**:
-
-  - Use `DB.Begin()` to start a transaction.
-  - Use `tx.Exec()`, `tx.Query()`, or `tx.QueryRow()` to execute statements within the transaction.
-  - Commit the transaction with `tx.Commit()` or roll back with `tx.Rollback()`.
-
-- **Example**:
-
-  ```go
-  type ExampleModel struct {
-      DB *sql.DB
-  }
-
-  func (m *ExampleModel) ExampleTransaction() error {
-      // Calling the Begin() method on the connection pool creates a new sql.Tx
-      // object, which represents the in-progress database transaction.
-      tx, err := m.DB.Begin()
-      if err != nil {
-          return err
-      }
-
-      // Defer a call to tx.Rollback() to ensure it is always called before the
-      // function returns. If the transaction succeeds it will be already be
-      // committed by the time tx.Rollback() is called, making tx.Rollback() a
-      // no-op. Otherwise, in the event of an error, tx.Rollback() will rollback
-      // the changes before the function returns.
-      defer tx.Rollback()
-
-      // Call Exec() on the transaction, passing in your statement and any
-      // parameters. It's important to notice that tx.Exec() is called on the
-      // transaction object just created, NOT the connection pool. Although we're
-      // using tx.Exec() here you can also use tx.Query() and tx.QueryRow() in
-      // exactly the same way.
-      _, err = tx.Exec("INSERT INTO ...")
-      if err != nil {
-          return err
-      }
-
-      // Carry out another transaction in exactly the same way.
-      _, err = tx.Exec("UPDATE ...")
-      if err != nil {
-          return err
-      }
-
-      // If there are no errors, the statements in the transaction can be committed
-      // to the database with the tx.Commit() method.
-      err = tx.Commit()
-      return err
-  }
-  ```
-
-- **Key Points**:
-  - Always call `Rollback()` or `Commit()` to release the connection.
-  - Use `defer tx.Rollback()` to ensure cleanup in case of errors.
-
-### Prepared Statements
-
-- **Purpose**: Improve performance by reusing complex or repeated SQL statements.
-
-- **How It Works**:
-
-  - Use `DB.Prepare()` to create a prepared statement.
-  - Execute the statement with `stmt.Exec()`, `stmt.Query()`, or `stmt.QueryRow()`.
-
-- **Example**:
-
-  ```go
-  // We need somewhere to store the prepared statement for the lifetime of our
-  // web application. A neat way is to embed it in the model alongside the
-  // connection pool.
-  type ExampleModel struct {
-      DB         *sql.DB
-      InsertStmt *sql.Stmt
-  }
-
-  // Create a constructor for the model, in which we set up the prepared
-  // statement.
-  func NewExampleModel(db *sql.DB) (*ExampleModel, error) {
-      // Use the Prepare method to create a new prepared statement for the
-      // current connection pool. This returns a sql.Stmt object which represents
-      // the prepared statement.
-      insertStmt, err := db.Prepare("INSERT INTO ...")
-      if err != nil {
-          return nil, err
-      }
-
-      // Store it in our ExampleModel struct, alongside the connection pool.
-      return &ExampleModel{DB: db, InsertStmt: insertStmt}, nil
-  }
-
-  // Any methods implemented against the ExampleModel struct will have access to
-  // the prepared statement.
-  func (m *ExampleModel) Insert(args...) error {
-      // We then need to call Exec directly against the prepared statement, rather
-      // than against the connection pool. Prepared statements also support the
-      // Query and QueryRow methods.
-      _, err := m.InsertStmt.Exec(args...)
-
-      return err
-  }
-
-  // In the web application's main function we will need to initialize a new
-  // ExampleModel struct using the constructor function.
-  func main() {
-      db, err := sql.Open(...)
-      if err != nil {
-          logger.Error(err.Error())
-          os.Exit(1)
-      }
-      defer db.Close()
-
-      // Use the constructor function to create a new ExampleModel struct.
-      exampleModel, err := NewExampleModel(db)
-      if err != nil {
-          logger.Error(err.Error())
-          os.Exit(1)
-      }
-
-      // Defer a call to Close() on the prepared statement to ensure that it is
-      // properly closed before our main function terminates.
-      defer exampleModel.InsertStmt.Close()
-  }
-  ```
-
-- **Considerations**:
-  - Prepared statements are tied to a specific database connection.
-    - The `sql.Stmt` object remembers which connection in the pool was used.
-  - Under heavy load, statements may be re-prepared on different connections, reducing performance gains.
-  - Complexity increases, so use prepared statements only when performance benefits are significant.
-
-# Chapter 5: Dynamic HTML templates
-
-## 5.1 Displaying dynamic data
-
-1. **Updating snippetView handler**
-
-**File: `cmd/web/templates.go`**
-
-```go
-package main
-
-import "snippetbox.libra.dev/internal/models"
-
-// Define a templateData type to act as the holding structure for
-// any dynamic data that we want to pass to our HTML templates.
-// At the moment it only contains one field, but we'll add more
-// to it as the build progresses.
-type templateData struct {
-    Snippet models.Snippet
+    // If there are no errors, the statements in the transaction can be committed
+    // to the database with the tx.Commit() method.
+    err = tx.Commit()
+    return err
 }
 ```
 
-**File: `cmd/web/handlers.go`**
-
 ```go
-package main
-
-...
-
-func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
-    id, err := strconv.Atoi(r.PathValue("id"))
-    if err != nil || id < 1 {
-        http.NotFound(w, r)
-        return
-    }
-
-    snippet, err := app.snippets.Get(id)
-    if err != nil {
-        if errors.Is(err, models.ErrNoRecord) {
-            http.NotFound(w, r)
-        } else {
-            app.serverError(w, r, err)
-        }
-        return
-    }
-
-    // Initialize a slice containing the paths to the view.tmpl file,
-    // plus the base layout and navigation partial that we made earlier.
-    files := []string{
-        "./ui/html/base.tmpl",
-        "./ui/html/partials/nav.tmpl",
-        "./ui/html/pages/view.tmpl",
-    }
-
-    // Parse the template files...
-    ts, err := template.ParseFiles(files...)
-    if err != nil {
-        app.serverError(w, r, err)
-        return
-    }
-
-    // Create an instance of a templateData struct holding the snippet data.
-    data := templateData{
-        Snippet: snippet,
-    }
-
-    // Pass in the templateData struct when executing the template.
-    err = ts.ExecuteTemplate(w, "base", data)
-    if err != nil {
-        app.serverError(w, r, err)
-    }
+// We need somewhere to store the prepared statement for the lifetime of our
+// web application. A neat way is to embed it in the model alongside the
+// connection pool.
+type ExampleModel struct {
+    DB         *sql.DB
+    InsertStmt *sql.Stmt
 }
 
-...
-```
-
-2. **Creating view template**
-
-**File: `ui/html/pages/view.tmpl`**
-
-```html
-{{define "title"}}Snippet #{{.Snippet.ID}}{{end}} {{define "main"}}
-<div class="snippet">
-  <div class="metadata">
-    <strong>{{.Snippet.Title}}</strong>
-    <span>#{{.Snippet.ID}}</span>
-  </div>
-  <pre><code>{{.Snippet.Content}}</code></pre>
-  <div class="metadata">
-    <time>Created: {{.Snippet.Created}}</time>
-    <time>Expires: {{.Snippet.Expires}}</time>
-  </div>
-</div>
-{{end}}
-```
-
-**Key Points**:
-
-- Any data that you pass as the final parameter to `ts.ExecuteTemplate()` is represented within your HTML templates by the `.` character (referred to as dot).
-
-- `html/template` package allows you to pass in only one item of dynamic data when rendering a template.
-  - **Solution**: Create `templateData` struct to hold multiple dynamic data items.
-
-3. **Key Features of `html/template`**
-
-- **Dynamic content escaping**:
-
-  - Automatically escapes any data that is yielded between `{{ }}` tags.
-  - Prevents XSS attacks by escaping dynamic content.
-  - Context-aware escaping for HTML, CSS, JS, and URIs.
-  - Example:
-    ```html
-    <span>{{"<script>alert('xss attack')</script>"}}</span>
-    ```
-    It would be rendered harmlessly as:
-    ```html
-    <span>&lt;script&gt;alert(&#39;xss attack&#39;)&lt;/script&gt;</span>
-    ```
-
-- **Nested templates**:
-
-  - Must explicitly pass dot when invoking one template from another template:
-    ```html
-    {{template "main" .}}
-    {{block "sidebar" .}}{{end}}
-    ```
-
-- **Method calling**:
-
-  - Can call methods on exported types:
-    `{{.Snippet.Created.Weekday}}`
-  - Pass parameters with spaces (no parentheses):
-    `{{.Snippet.Created.AddDate 0 6 0}}`
-
-- **HTML comments**:
-  - All HTML comments are stripped for security, including conditional comments.
-
-**NOTE**:
-
-PostgreSQL vs. MySQL: `\n` Behavior:
-
-| Behavior                 | PostgreSQL                        | MySQL                                             |
-|--------------------------|-----------------------------------|---------------------------------------------------|
-| **Default Parsing**      | **Treats `\n` as literal text**.  | **Parses `\n` as a line break**.                  |
-| **Store Actual Newline** | Use `E''` prefix (e.g., `E'\n'`). | Default behavior.                                 |
-| **Store Literal `\n`**   | Default behavior.                 | Escape as `\\n` or enable `NO_BACKSLASH_ESCAPES`. |
-| **Example**              | `'Line1\nLine2'` → Stores `\n`.   | `'Line1\nLine2'` → Stores newline.                |
-
-### Key Takeaways
-
-- Use `html/template` for automatic XSS protection.
-- Can only pass single data item to templates (use wrapper structs for multiple items).
-- Access struct fields with dot notation (`{{.Field}}`).
-- Always pipeline dot (`{{template "name" .}}`) when invoking nested templates.
-- `html/template` automatically escapes any data that is yielded between `{{ }}` tags.
-- HTML comments are removed from templates.
-- Can call methods on template variables with proper syntax.
-
-## 5.2 Template actions and functions
-
-1. **Actions**
-
-| Action | Description |
-|--------|-------------|
-| `{{if .Foo}} C1 {{else}} C2 {{end}}`    | Renders C1 if `.Foo` not empty, else C2 |
-| `{{with .Foo}} C1 {{else}} C2 {{end}}`  | Sets dot to `.Foo` and renders C1 if not empty, else C2 |
-| `{{range .Foo}} C1 {{else}} C2 {{end}}` | Loops over `.Foo` (array/slice/map/channel), renders C1 for each element, else C2 |
-
-**Note**
-- `{{else}}` clause is optional.
-- Empty values: `false`, `0`, `nil`, zero-length collections.
-- `with` and `range` change the value of dot.
-
-2. **Functions**
-
-| Function | Description |
-|----------|-------------|
-| `{{eq .Foo .Bar}}`             | True if `.Foo` equals `.Bar` |
-| `{{ne .Foo .Bar}}`             | True if `.Foo` not equal `.Bar` |
-| `{{not .Foo}}`                 | Boolean negation of `.Foo` |
-| `{{or .Foo .Bar}}`             | Yields `.Foo` if not empty, else `.Bar` |
-| `{{index .Foo i}}`             | Value of `.Foo` at index `i` (map/slice/array) |
-| `{{printf "%s-%s" .Foo .Bar}}` | Formatted string (like `fmt.Sprintf`) |
-| `{{len .Foo}}`                 | Length of `.Foo` as integer |
-| `{{$bar := len .Foo}}`         | Assign length to _template variable_ `$bar` |
-
-**Note**
-
-- **Combining functions**:
-  `{{if (gt (len .Foo) 99)}} C1 {{end}}`
-  `{{if (and (eq .Foo 1) (le .Bar 20))}} C1 {{end}}`
-
-- **Loop control**:
-
-  Control loops with `break` and `continue`.
-
-  ```html
-  {{range .Foo}}
-    // Skip this iteration if the .ID value equals 99.
-    {{if eq .ID 99}}
-        {{continue}}
-    {{end}}
-    // ...
-  {{end}}
-  ```
-  ```html
-  {{range .Foo}}
-    // End the loop if the .ID value equals 99.
-    {{if eq .ID 99}}
-        {{break}}
-    {{end}}
-    // ...
-  {{end}}
-  ```
-
-3. **Implementation**
-
-**File: `ui/html/pages/view.tmpl`**
-
-```html
-{{define "title"}}Snippet #{{.Snippet.ID}}{{end}}
-
-{{define "main"}}
-    {{with .Snippet}}
-    <div class='snippet'>
-        <div class='metadata'>
-            <strong>{{.Title}}</strong>
-            <span>#{{.ID}}</span>
-        </div>
-        <pre><code>{{.Content}}</code></pre>
-        <div class='metadata'>
-            <time>Created: {{.Created}}</time>
-            <time>Expires: {{.Expires}}</time>
-        </div>
-    </div>
-    {{end}}
-{{end}}
-```
-
-**File: `cmd/web/templates.go`**
-
-```go
-package main
-
-import "snippetbox.libra.dev/internal/models"
-
-// Include a Snippets field in the templateData struct.
-type templateData struct {
-    Snippet  models.Snippet
-    Snippets []models.Snippet
-}
-```
-
-**File: `cmd/web/handlers.go`**
-
-```go
-package main
-
-...
-
-func (app *application) home(w http.ResponseWriter, r *http.Request) {
-    w.Header().Add("Server", "Go")
-    
-    snippets, err := app.snippets.Latest()
-    if err != nil {
-        app.serverError(w, r, err)
-        return
-    }
-
-    files := []string{
-        "./ui/html/base.tmpl",
-        "./ui/html/partials/nav.tmpl",
-        "./ui/html/pages/home.tmpl",
-    }
-
-    ts, err := template.ParseFiles(files...)
-    if err != nil {
-        app.serverError(w, r, err)
-        return
-    }
-
-    // Create an instance of a templateData struct holding the slice of
-    // snippets.
-    data := templateData{
-        Snippets: snippets,
-    }
-
-    // Pass in the templateData struct when executing the template.
-    err = ts.ExecuteTemplate(w, "base", data)
-    if err != nil {
-        app.serverError(w, r, err)
-    }
-}
-
-...
-```
-
-**File: `ui/html/pages/home.tmpl`**
-
-```html
-{{define "title"}}Home{{end}}
-
-{{define "main"}}
-    <h2>Latest Snippets</h2>
-    {{if .Snippets}}
-     <table>
-        <tr>
-            <th>Title</th>
-            <th>Created</th>
-            <th>ID</th>
-        </tr>
-        {{range .Snippets}}
-        <tr>
-            <td><a href='/snippet/view/{{.ID}}'>{{.Title}}</a></td>
-            <td>{{.Created}}</td>
-            <td>#{{.ID}}</td>
-        </tr>
-        {{end}}
-    </table>
-    {{else}}
-        <p>There's nothing to see here... yet!</p>
-    {{end}}
-{{end}}
-```
-
-### Key Takeaways
-
-- Use `if` for conditional rendering.
-- `with` changes dot context for its block.
-- `range` iterates over slices/arrays/maps.
-- Template functions enable complex logic.
-- Combine functions with parentheses.
-- Control loops with `break` and `continue`.
-- Variables can be declared with `$var := value`.
-
-## 5.3 Caching templates
-
-1. **Optimization Goals**
-- Avoid repeatedly parsing template files by implementing an in-memory cache.
-- Reduce code duplication in handlers with a helper function.
-
-2. **Template Cache Implementation**
-
-**File: `cmd/web/templates.go`**
-
-```go
-package main
-
-import (
-    "html/template" // New import
-    "path/filepath" // New import
-
-    "snippetbox.libra.dev/internal/models"
-)
-
-...
-
-func newTemplateCache() (map[string]*template.Template, error) {
-    // Initialize a new map to act as the cache.
-    cache := map[string]*template.Template{}
-
-    // Use the filepath.Glob() function to get a slice of all filepaths that
-    // match the pattern "./ui/html/pages/*.tmpl". This will essentially gives
-    // us a slice of all the filepaths for our application 'page' templates
-    // like: [ui/html/pages/home.tmpl ui/html/pages/view.tmpl]
-    pages, err := filepath.Glob("./ui/html/pages/*.tmpl")
+// Create a constructor for the model, in which we set up the prepared
+// statement.
+func NewExampleModel(db *sql.DB) (*ExampleModel, error) {
+    // Use the Prepare method to create a new prepared statement for the
+    // current connection pool. This returns a sql.Stmt object which represents
+    // the prepared statement.
+    insertStmt, err := db.Prepare("INSERT INTO ...")
     if err != nil {
         return nil, err
     }
 
-    // Loop through the page filepaths one-by-one.
-    for _, page := range pages {
-        // Extract the file name (like 'home.tmpl') from the full filepath
-        // and assign it to the name variable.
-        name := filepath.Base(page)
-
-        // Create a slice containing the filepaths for our base template, any
-        // partials and the page.
-        files := []string{
-            "./ui/html/base.tmpl",
-            "./ui/html/partials/nav.tmpl",
-            page,
-        }
-
-        // Parse the files into a template set.
-        ts, err := template.ParseFiles(files...)
-        if err != nil {
-            return nil, err
-        }
-
-        // Add the template set to the map, using the name of the page
-        // (like 'home.tmpl') as the key.
-        cache[name] = ts
-    }
-
-    // Return the map.
-    return cache, nil
-}
-```
-
-**Note**:
-- `filepath.Glob()` returns a slice of strings representing all file paths that match the pattern.
-- `filepath.Base()` returns the last element of the path.
-
-**File: `cmd/web/main.go`**
-
-```go
-package main
-
-import (
-    "database/sql"
-    "flag"
-    "html/template" // New import
-    "log/slog"
-    "net/http"
-    "os"
-
-    "snippetbox.alexedwards.net/internal/models"
-
-    _ "github.com/jackc/pgx/v5/stdlib"
-)
-
-// Add a templateCache field to the application struct.
-type application struct {
-    logger        *slog.Logger
-    snippets      *models.SnippetModel
-    templateCache map[string]*template.Template
+    // Store it in our ExampleModel struct, alongside the connection pool.
+    return &ExampleModel{DB: db, InsertStmt: insertStmt}, nil
 }
 
+// Any methods implemented against the ExampleModel struct will have access to
+// the prepared statement.
+func (m *ExampleModel) Insert(args...) error {
+    // We then need to call Exec directly against the prepared statement, rather
+    // than against the connection pool. Prepared statements also support the
+    // Query and QueryRow methods.
+    _, err := m.InsertStmt.Exec(args...)
+
+    return err
+}
+
+// In the web application's main function we will need to initialize a new
+// ExampleModel struct using the constructor function.
 func main() {
-    addr := flag.String("addr", ":4000", "HTTP network address")
-    dsn := flag.String("dsn", "web:pass@/snippetbox?parseTime=true", "MySQL data source name")
-    flag.Parse()
-
-    logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-
-    db, err := openDB(*dsn)
+    db, err := sql.Open(...)
     if err != nil {
         logger.Error(err.Error())
         os.Exit(1)
     }
     defer db.Close()
 
-    // Initialize a new template cache...
-    templateCache, err := newTemplateCache()
+    // Use the constructor function to create a new ExampleModel struct.
+    exampleModel, err := NewExampleModel(db)
     if err != nil {
         logger.Error(err.Error())
         os.Exit(1)
     }
 
-    // And add it to the application dependencies.
-    app := &application{
-        logger:        logger,
-        snippets:      &models.SnippetModel{DB: db},
-        templateCache: templateCache,
-    }
-
-    logger.Info("starting server", "addr", *addr)
-
-    err = http.ListenAndServe(*addr, app.routes())
-    logger.Error(err.Error())
-    os.Exit(1)
-}
-
-...
-```
-
-3. **Render Helper Function Implementation**
-
-**File: `cmd/web/helpers.go`**
-
-```go
-package main
-
-import (
-    "fmt" // New import
-    "net/http"
-)
-
-...
-
-func (app *application) render(w http.ResponseWriter, r *http.Request, status int, page string, data templateData) {
-    // Retrieve the appropriate template set from the cache based on the page
-    // name (like 'home.tmpl'). If no entry exists in the cache with the
-    // provided name, then create a new error and call the serverError() helper
-    // method that we made earlier and return.
-    ts, ok := app.templateCache[page]
-    if !ok {
-        err := fmt.Errorf("the template %s does not exist", page)
-        app.serverError(w, r, err)
-        return
-    }
-
-    // Write out the provided HTTP status code ('200 OK', '400 Bad Request' etc).
-    w.WriteHeader(status)
-
-    // Execute the template set and write the response body. Again, if there
-    // is any error we call the serverError() helper.
-    err := ts.ExecuteTemplate(w, "base", data)
-    if err != nil {
-        app.serverError(w, r, err)
-    }
+    // Defer a call to Close() on the prepared statement to ensure that it is
+    // properly closed before our main function terminates.
+    defer exampleModel.InsertStmt.Close()
 }
 ```
-
-**File: `cmd/web/handlers.go`**
-
-```go
-package main
-
-import (
-    "errors"
-    "fmt"
-    "net/http"
-    "strconv"
-
-    "snippetbox.alexedwards.net/internal/models"
-)
-
-func (app *application) home(w http.ResponseWriter, r *http.Request) {
-    w.Header().Add("Server", "Go")
-    
-    snippets, err := app.snippets.Latest()
-    if err != nil {
-        app.serverError(w, r, err)
-        return
-    }
-
-    // Use the new render helper.
-    app.render(w, r, http.StatusOK, "home.tmpl", templateData{
-        Snippets: snippets,
-    })
-}
-
-func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
-    id, err := strconv.Atoi(r.PathValue("id"))
-    if err != nil || id < 1 {
-        http.NotFound(w, r)
-        return
-    }
-
-    snippet, err := app.snippets.Get(id)
-    if err != nil {
-        if errors.Is(err, models.ErrNoRecord) {
-            http.NotFound(w, r)
-        } else {
-            app.serverError(w, r, err)
-        }
-        return
-    }
-
-    // Use the new render helper.
-    app.render(w, r, http.StatusOK, "view.tmpl", templateData{
-        Snippet: snippet,
-    })
-}
-
-...
-```
-
-4. **Improve Partial Parsing**
-
-**File: `cmd/web/templates.go`**
-
-```go
-package main
-
-...
-
-func newTemplateCache() (map[string]*template.Template, error) {
-    cache := map[string]*template.Template{}
-
-    pages, err := filepath.Glob("./ui/html/pages/*.tmpl")
-    if err != nil {
-        return nil, err
-    }
-
-    for _, page := range pages {
-        name := filepath.Base(page)
-
-        // Parse the base template file into a template set.
-        ts, err := template.ParseFiles("./ui/html/base.tmpl")
-        if err != nil {
-            return nil, err
-        }
-
-        // Call ParseGlob() *on this template set* to add any partials.
-        ts, err = ts.ParseGlob("./ui/html/partials/*.tmpl")
-        if err != nil {
-            return nil, err
-        }
-
-        // Call ParseFiles() *on this template set* to add the  page template.
-        ts, err = ts.ParseFiles(page)
-        if err != nil {
-            return nil, err
-        }
-
-        // Add the template set to the map as normal...
-        cache[name] = ts
-    }
-
-    return cache, nil
-}
-```
-
-**Note**:
-- `template.ParseGlob()` parses all files in a directory that match the pattern.
-- `ParseGlob()` and `ParseFiles()` can be called multiple times on the same template set.
-
-### Key Takeaways
-
-- Cache templates at startup to avoid repeated parsing.
-  - Store cache in app struct for easy handler access.
-- Centralize rendering with a helper method to reduce duplication.
-- Automatically include partials using `ParseGlob()`.
-
-## 5.4 Catching runtime errors
-
-1. **Problem**
-
-Let’s add a deliberate error to our template.
-
-**File: `ui/html/pages/view.tmpl`**
-
-```html
-{{define "title"}}Snippet #{{.Snippet.ID}}{{end}}
-
-{{define "main"}}
-    {{with .Snippet}}
-    <div class='snippet'>
-        <div class='metadata'>
-            <strong>{{.Title}}</strong>
-            <span>#{{.ID}}</span>
-        </div>
-        {{len nil}} <!-- Deliberate error -->
-        <pre><code>{{.Content}}</code></pre>
-        <div class='metadata'>
-            <time>Created: {{.Created}}</time>
-            <time>Expires: {{.Expires}}</time>
-        </div>
-    </div>
-    {{end}}
-{{end}}
-```
-
-Result:
-
-```bash
-$ curl -i http://localhost:4000/snippet/view/1
-HTTP/1.1 200 OK
-Date: Wed, 18 Mar 2024 11:29:23 GMT
-Content-Length: 734
-Content-Type: text/html; charset=utf-8
-
-
-<!doctype html>
-<html lang='en'>
-    <head>
-        <meta charset='utf-8'>
-        <title>Snippet #1 - Snippetbox</title>
-        <link rel='stylesheet' href='/static/css/main.css'>
-        <link rel='shortcut icon' href='/static/img/favicon.ico' type='image/x-icon'>
-        <link rel='stylesheet' href='https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700'>
-    </head>
-    <body>
-        <header>
-            <h1><a href='/'>Snippetbox</a></h1>
-        </header>
-        
- <nav>
-    <a href='/'>Home</a>
-</nav>
-
-        <main>
-            
-    
-    <div class='snippet'>
-        <div class='metadata'>
-            <strong>An old silent pond</strong>
-            <span>#1</span>
-        </div>
-        Internal Server Error
-```
-
-- Our application has thrown an error, but the user has wrongly been sent a `200 OK` response. And even worse, they’ve received a half-complete HTML page.
-
-2. **Solution**
-
-We make a ‘trial’ render by writing the template into a buffer.
-- If this fails, we can respond to the user with an error message.
-- If it works, we can then write the contents of the buffer to our `http.ResponseWriter`.
-
-**File: `cmd/web/helpers.go`**
-
-```go
-package main
-
-import (
-    "bytes" // New import
-    "fmt"
-    "net/http"
-)
-
-...
-
-func (app *application) render(w http.ResponseWriter, r *http.Request, status int, page string, data templateData) {
-    ts, ok := app.templateCache[page]
-    if !ok {
-        err := fmt.Errorf("the template %s does not exist", page)
-        app.serverError(w, r, err)
-        return
-    }
-
-    // Initialize a new buffer.
-    buf := new(bytes.Buffer)
-
-    // Write the template to the buffer, instead of straight to the
-    // http.ResponseWriter. If there's an error, call our serverError() helper
-    // and then return.
-    err := ts.ExecuteTemplate(buf, "base", data)
-    if err != nil {
-        app.serverError(w, r, err)
-        return
-    }
-
-    // If the template is written to the buffer without any errors, we are safe
-    // to go ahead and write the HTTP status code to http.ResponseWriter.
-    w.WriteHeader(status)
-
-    // Write the contents of the buffer to the http.ResponseWriter. Note: this
-    // is another time where we pass our http.ResponseWriter to a function that
-    // takes an io.Writer.
-    buf.WriteTo(w)
-}
-```
-
-Result:
-
-```bash
-$ curl -i http://localhost:4000/snippet/view/1
-HTTP/1.1 500 Internal Server Error
-Content-Type: text/plain; charset=utf-8
-X-Content-Type-Options: nosniff
-Date: Wed, 18 Mar 2024 11:29:23 GMT
-Content-Length: 22
-
-Internal Server Error
-```
-
-### Key Takeaways
-
-- Use `bytes.Buffer` to capture template output and handle errors.
-
-
-## 5.5 Common dynamic data
-
-There may be common dynamic data that you want to include on more than one webpage. For example:
-- the name and profile picture of the current user
-- a CSRF token in all pages with forms
-
-Say that we want to include the current year in the footer on every page.
-
-**Implementation**
-
-**File: `cmd/web/templates.go`**
-
-```go
-package main
-
-...
-
-// Add a CurrentYear field to the templateData struct.
-type templateData struct {
-    CurrentYear int
-    Snippet     models.Snippet
-    Snippets    []models.Snippet
-}
-
-...
-```
-
-**File: `cmd/web/helpers.go`**
-
-```go
-package main
-
-import (
-    "bytes"
-    "fmt"
-    "net/http"
-    "time" // New import
-)
-
-...
-
-// Create an newTemplateData() helper, which returns a templateData struct 
-// initialized with the current year. Note that we're not using the *http.Request 
-// parameter here at the moment, but we will do later in the book.
-func (app *application) newTemplateData(r *http.Request) templateData {
-    return templateData{
-        CurrentYear: time.Now().Year(),
-    }
-}
-
-...
-```
-
-**File: `cmd/web/handlers.go`**
-
-```go
-package main
-
-...
-
-func (app *application) home(w http.ResponseWriter, r *http.Request) {
-    w.Header().Add("Server", "Go")
-    
-    snippets, err := app.snippets.Latest()
-    if err != nil {
-        app.serverError(w, r, err)
-        return
-    }
-
-    // Call the newTemplateData() helper to get a templateData struct containing
-    // the 'default' data (which for now is just the current year), and add the
-    // snippets slice to it.
-    data := app.newTemplateData(r)
-    data.Snippets = snippets
-
-    // Pass the data to the render() helper as normal.
-    app.render(w, r, http.StatusOK, "home.tmpl", data)
-}
-
-func (app *application) snippetView(w http.ResponseWriter, r *http.Request) {
-    id, err := strconv.Atoi(r.PathValue("id"))
-    if err != nil || id < 1 {
-        http.NotFound(w, r)
-        return
-    }
-
-    snippet, err := app.snippets.Get(id)
-    if err != nil {
-        if errors.Is(err, models.ErrNoRecord) {
-            http.NotFound(w, r)
-        } else {
-            app.serverError(w, r, err)
-        }
-        return
-    }
-
-    // And do the same thing again here...
-    data := app.newTemplateData(r)
-    data.Snippet = snippet
-
-    app.render(w, r, http.StatusOK, "view.tmpl", data)
-}
-
-...
-```
-
-**File: `ui/html/base.tmpl`**
-
-```html
-...
-
-<footer>
-    <!-- Update the footer to include the current year -->
-    Powered by <a href='https://golang.org/'>Go</a> in {{.CurrentYear}}
-</footer>
-
-...
-```
-
-## 5.6 Custom template functions
-
-Let’s create a custom `humanDate()` function which outputs datetimes in a nice ‘humanized’ format.
-
-1. **Implementation**
-
-**File: `cmd/web/templates.go`**
-
-```go
-package main
-
-import (
-    "html/template"
-    "path/filepath"
-    "time" // New import
-
-    "snippetbox.alexedwards.net/internal/models"
-)
-
-...
-
-// Create a humanDate function which returns a nicely formatted string
-// representation of a time.Time object.
-func humanDate(t time.Time) string {
-    return t.Format("02 Jan 2006 at 15:04")
-}
-
-// Initialize a template.FuncMap object and store it in a global variable. This is
-// essentially a string-keyed map which acts as a lookup between the names of our
-// custom template functions and the functions themselves.
-var functions = template.FuncMap{
-    "humanDate": humanDate,
-}
-
-func newTemplateCache() (map[string]*template.Template, error) {
-    cache := map[string]*template.Template{}
-
-    pages, err := filepath.Glob("./ui/html/pages/*.tmpl")
-    if err != nil {
-        return nil, err
-    }
-
-    for _, page := range pages {
-        name := filepath.Base(page)
-
-        // The template.FuncMap must be registered with the template set before you
-        // call the ParseFiles() method. This means we have to use template.New() to
-        // create an empty template set, use the Funcs() method to register the
-        // template.FuncMap, and then parse the file as normal.
-        ts, err := template.New(name).Funcs(functions).ParseFiles("./ui/html/base.tmpl")
-        if err != nil {
-            return nil, err
-        }
-
-        ts, err = ts.ParseGlob("./ui/html/partials/*.tmpl")
-        if err != nil {
-            return nil, err
-        }
-
-        ts, err = ts.ParseFiles(page)
-        if err != nil {
-            return nil, err
-        }
-
-        cache[name] = ts
-    }
-
-    return cache, nil
-}
-```
-
-**File: `ui/html/pages/home.tmpl`**
-
-```html
-...
-
-<td>{{humanDate .Created}}</td>
-
-...
-```
-
-
-**File: `ui/html/pages/view.tmpl`**
-
-```html
-...
-
-<time>Created: {{.Created | humanDate}}</time>
-<time>Expires: {{.Expires | humanDate}}</time>
-
-...
-```
-
-**Key Points**
-
-- `template.FuncMap`: A map of functions that can be used in templates.
-- `template.Funcs()`: Register the `template.FuncMap` with the template set.
-  - It must be called before the template is parsed.
-
-- Custom template functions (like our `humanDate()` function) can accept as many parameters as they need to, but they must return one value only. The only exception to this is if you want to return an error as the second value.
-
-2. **Pipeline**
-
-- Use the `|` character to pipeline values to a function.
-
-  ```html
-  <time>Created: {{humanDate .Created}}</time>
-  ```
-
-  is equivalent to:
-
-  ```html
-  <time>Created: {{.Created | humanDate}}</time>
-  ```
-
-- You can make an arbitrarily long chain of template functions. For example:
-  ```html
-  <time>{{.Created | humanDate | printf "Created: %s"}}</time>
-  ```
-
-### Key Takeaways
-
-- Use `template.FuncMap` to register custom template functions.
-- Use the `template.Funcs()` method to register the `template.FuncMap` with the template set.
-- `template.Funcs()` must be called before the template is parsed.
-- Custom template functions can accept as many parameters as they need to, but they must return one value only. The only exception to this is if you want to return an error as the second value.
-- Use the `|` character to pipeline values to a function in a template.
 
 # Chapter 6: Middleware
 
 ## 6.1 How middleware works
 
-1. **Core Concepts**
+**Middleware Basics**
 
-- Middleware sits between the server and handlers in the request chain.
-- Each middleware calls `next.ServeHTTP()` to continue the chain.
-- Two common implementation patterns:
-  ```go
-  // Closure pattern
-  func myMiddleware(next http.Handler) http.Handler {
-      fn := func(w http.ResponseWriter, r *http.Request) {
-          // Middleware logic
-          next.ServeHTTP(w, r)
-      }
-      return http.HandlerFunc(fn)
-  }
-  ```
+- Sits between server and handlers in request chain
+- Must call `next.ServeHTTP()` to continue chain
 
-  ```go
-  // Anonymous function pattern
-  func myMiddleware(next http.Handler) http.Handler {
-      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-          // Middleware logic
-          next.ServeHTTP(w, r)
-      })
-  }
-  ```
-
-2. **Positioning Matters**
-
-- **Before servemux**: Runs on all requests (e.g., logging).
-  ```plaintext
-  myMiddleware -> servemux -> handler
-  ```
-- **After servemux**: Runs on specific routes (e.g., auth).
-  ```plaintext
-  servemux -> myMiddleware -> handler
-  ```
-
-### Key Takeaways
-
-- **Chain Structure**: Middleware creates a handler chain where each link can process requests/responses.
-- **Flexible Placement**: Position determines scope (global vs route-specific).
-- **Explicit Control**: Must call `next.ServeHTTP()` to continue chain.
-- **Common Uses**
-  - Request logging
-  - Authentication/authorization
-  - Error handling
-  - Headers manipulation
-- **Performance**: Keep middleware lightweight since it runs on every request.
-
-##  6.2 Setting common headers
-
-1. **Security Headers Overview**
-
-- **Content-Security-Policy**: Restricts resource loading sources.
-- **Referrer-Policy**: Controls referrer header information.
-- **X-Content-Type-Options**: Prevents MIME-type sniffing.
-- **X-Frame-Options**: Prevents clickjacking attacks.
-- **X-XSS-Protection**: Disables legacy XSS protection (when using CSP).
-
-2. **Implementation**
-
-**File: `cmd/web/middleware.go`**
+**Implementation Patterns**
 
 ```go
-package main
+// Closure style
+func myMiddleware(next http.Handler) http.Handler {
+    fn := func(w http.ResponseWriter, r *http.Request) {
+        // Logic
+        next.ServeHTTP(w, r)
+    }
+    return http.HandlerFunc(fn)
+}
 
-import (
-    "net/http"
-)
-
-func commonHeaders(next http.Handler) http.Handler {
+// Anonymous function style
+func myMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Note: This is split across multiple lines for readability. You don't 
-        // need to do this in your own code.
-        w.Header().Set("Content-Security-Policy",
-            "default-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com")
-
-        w.Header().Set("Referrer-Policy", "origin-when-cross-origin")
-        w.Header().Set("X-Content-Type-Options", "nosniff")
-        w.Header().Set("X-Frame-Options", "deny")
-        w.Header().Set("X-XSS-Protection", "0")
-
-        w.Header().Set("Server", "Go")
-
+        // Logic
         next.ServeHTTP(w, r)
     })
 }
 ```
 
-**File: `cmd/web/routes.go`**
+- **Placement Impact**
+  - *Before servemux*: Affects all requests (e.g., logging)
+
+  ```
+  middleware -> servemux -> handler
+  ```
+
+- *After servemux*: Route-specific (e.g., auth)
+
+  ```
+  servemux -> middleware -> handler
+  ```
+
+**Key Points**
+
+- Position determines scope (global vs route-level)
+- Common uses: logging, auth, error handling, headers
+- Keep middleware lightweight for performance
+
+##  6.2 Setting common headers
+
+**Implementation**
 
 ```go
-package main
+// cmd/web/middleware.go
+func commonHeaders(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Server", "Go")
+        ...
+        next.ServeHTTP(w, r)
+    })
+}
 
-import "net/http"
-
-// Update the signature for the routes() method so that it returns a
-// http.Handler instead of *http.ServeMux.
+// cmd/web/routes.go
 func (app *application) routes() http.Handler {
     mux := http.NewServeMux()
-
-    fileServer := http.FileServer(http.Dir("./ui/static/"))
-    mux.Handle("GET /static/", http.StripPrefix("/static", fileServer))
-    
+    mux.Handle("GET /static/", http.StripPrefix("/static", http.FileServer(http.Dir("./ui/static/"))))
     mux.HandleFunc("GET /{$}", app.home)
     mux.HandleFunc("GET /snippet/view/{id}", app.snippetView)
     mux.HandleFunc("GET /snippet/create", app.snippetCreate)
     mux.HandleFunc("POST /snippet/create", app.snippetCreatePost)
-
-    // Pass the servemux as the 'next' parameter to the commonHeaders middleware.
-    // Because commonHeaders is just a function, and the function returns a
-    // http.Handler we don't need to do anything else.
-    return commonHeaders(mux)
+    return commonHeaders(mux) // Wrap servemux with middleware
 }
-```
-
-**File: `cmd/web/handlers.go`**
-
-```go
-...
-
-func (app *application) home(w http.ResponseWriter, r *http.Request) {
-  // remove the w.Header().Add("Server", "Go")
-  ...
-}
-
-...
 ```
 
 **Key Points**
 
-- `routes()` should return `http.Handler` instead of `*http.ServeMux`.
-- **Middleware Flow**:
-  ```plaintext
-  commonHeaders → servemux → handler → servemux → commonHeaders
-  ```
+- `routes()` should return `http.Handler` instead of `*http.ServeMux`
 
-3. **Flow of Control**
+**Middleware Flow**
 
 ```plaintext
 commonHeaders → servemux → handler → servemux → commonHeaders
 ```
 
+**Execution Order**
+
 ```go
 func myMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Any code here will execute on the way down the chain.
+        // Downstream logic (before next handler)
         next.ServeHTTP(w, r)
-        // Any code here will execute on the way back up the chain.
+        // Upstream logic (after handler completes)
     })
 }
 ```
 
-4. **Early Returns**
+**Early Termination**
 
-Can stop chain execution and control will flow back upstream (e.g., for auth failures).
+- Can stop chain execution and control will flow back upstream (e.g., for auth failures)
 
 ```go
 func myMiddleware(next http.Handler) http.Handler {
@@ -4058,30 +2389,16 @@ func myMiddleware(next http.Handler) http.Handler {
 }
 ```
 
-### Key Takeaways
-- **Security Header**s provide critical protection against common web vulnerabilities.
-- **Global Middleware** should be placed before the router in the chain.
-- **Header Management**: Set headers once in middleware rather than individual handlers.
-- **Flow Control**:
-  - Middleware can modify both requests and responses.
-    ```plaintext
-    commonHeaders → servemux → handler → servemux → commonHeaders
-    ```
-  - Chain continues only when calling `next.ServeHTTP()`.
-  - Stop chain execution with early returns.
+---
 
+**[Example Code](https://github.com/Libra2021/snippet-box/commit/b8755411ea573e1811f38f8ae37644e7718f126a)**
 
 ## 6.3 Request logging
 
 **Implementation**
 
-**File: `cmd/web/middleware.go`**
-
 ```go
-package main
-
-...
-
+// middleware.go
 func (app *application) logRequest(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         var (
@@ -4096,14 +2413,10 @@ func (app *application) logRequest(next http.Handler) http.Handler {
         next.ServeHTTP(w, r)
     })
 }
-```
 
-**File: `cmd/web/routes.go`**
-
-```go
+// routes.go
 ...
 
-// Wrap the existing chain with the logRequest middleware.
 return app.logRequest(commonHeaders(mux))
 
 ...
@@ -4111,116 +2424,60 @@ return app.logRequest(commonHeaders(mux))
 
 **Key Points**
 
-- **Middleware Flow**:
-  ```plaintext
-  logRequest ↔ commonHeaders ↔ servemux ↔ application handler
-  ```
-- Implementing the middleware as a method against `application` to access the handler dependencies.
+- Implementing the middleware as a method against `application` to access the handler dependencies
+
+**Middleware Flow**
+
+```plaintext
+logRequest ↔ commonHeaders ↔ servemux ↔ application handler
+```
+
+---
+
+[Example Code](https://github.com/Libra2021/snippet-box/commit/4d9101b657ce12fbf05add468f34a09b573f1186)
 
 ## 6.4 Panic recovery
 
-1. **Problem**
+**Panic Recovery Middleware**
 
-- Panics in handlers terminate the goroutine of current request but the main goroutine still work.
-- Default behavior provides empty response.
-  ```bash
-  $ curl -i http://localhost:4000
-  curl: (52) Empty reply from server
-  ```
-- Need graceful error handling without crashing server.
+- Prevents server crashes from handler panics
+- Returns 500 response instead of empty reply
 
-2. **Implementation**
-
-**File: `cmd/web/middleware.go`**
+**Implementation**
 
 ```go
-package main
-
-import (
-    "fmt" // New import
-    "net/http"
-)
-
-...
-
+// middleware.go
 func (app *application) recoverPanic(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        // Create a deferred function (which will always be run in the event
-        // of a panic as Go unwinds the stack).
         defer func() {
-            // Use the builtin recover function to check if there has been a
-            // panic or not. If there has...
             if err := recover(); err != nil {
-                // Set a "Connection: close" header on the response.
-                w.Header().Set("Connection", "close")
-                // Call the app.serverError helper method to return a 500
-                // Internal Server response.
-                app.serverError(w, r, fmt.Errorf("%s", err))
+                w.Header().Set("Connection", "close")  // Force connection close
+                app.serverError(w, r, fmt.Errorf("%s", err))  // Return 500
             }
         }()
-
         next.ServeHTTP(w, r)
     })
 }
-```
 
-**File: `cmd/web/routes.go`**
-
-```go
-package main
-
-import "net/http"
-
+// routes.go
 func (app *application) routes() http.Handler {
     mux := http.NewServeMux()
-
-    fileServer := http.FileServer(http.Dir("./ui/static/"))
-    mux.Handle("GET /static/", http.StripPrefix("/static", fileServer))
-
-    mux.HandleFunc("GET /{$}", app.home)
-    mux.HandleFunc("GET /snippet/view/{id}", app.snippetView)
-    mux.HandleFunc("GET /snippet/create", app.snippetCreate)
-    mux.HandleFunc("POST /snippet/create", app.snippetCreatePost)
-
-    // Wrap the existing chain with the recoverPanic middleware.
+    // ... route setup
     return app.recoverPanic(app.logRequest(commonHeaders(mux)))
 }
 ```
 
 **Key Points**
 
-- Wrap the `recover()` inside a deferred function (which will always be run in the event of a panic as Go unwinds the stack).
+- Use a deferred function
 
-- `recover()` - Catches panics in current goroutine.
-  - return value: `nil` if no panic, otherwise the type that the parameter passed to `panic()` was.
+- `recover()` catches panics in current goroutine only
+- `Connection: close` ensures clean termination
+- Middleware order matters (place `recoverPanic` first)
 
-- `Connection: close` - Ensures clean connection termination.
-  - Acts as a trigger to make Go’s HTTP server automatically close the current connection.
-  - `HTTP/2`: Automatically strip the `Connection: Close` header and send a `GOAWAY` frame.
+**Background Goroutines**
 
-**Result**
-
-```bash
-$ curl -i http://localhost:4000
-HTTP/1.1 500 Internal Server Error
-Connection: close
-Content-Security-Policy: default-src 'self'; style-src 'self' fonts.googleapis.com; font-src fonts.gstatic.com
-Content-Type: text/plain; charset=utf-8
-Referrer-Policy: origin-when-cross-origin
-Server: Go
-X-Content-Type-Options: nosniff
-X-Frame-Options: deny
-X-Xss-Protection: 0
-Date: Wed, 26 Mar 2025 14:15:43 GMT
-Content-Length: 22
-
-Internal Server Error
-```
-
-3. **Panic Recovery in Background Goroutines**
-
-- Our middleware will only recover panics that happen in the same goroutine that executed the `recoverPanic()` middleware.
-- Make sure that you recover any panics from within the additional goroutines spinned up by your handlers.
+- Our middleware will only recover panics that happen in the same goroutine that executed the `recoverPanic()` middleware
 
 ```go
 func (app *application) myHandler(w http.ResponseWriter, r *http.Request) {
@@ -4230,7 +2487,7 @@ func (app *application) myHandler(w http.ResponseWriter, r *http.Request) {
     go func() {
         defer func() {
             if err := recover(); err != nil {
-                app.logger.Error(fmt.Sprint(err))
+                app.logger.Error(fmt.Sprint(err))  // Must handle separately
             }
         }()
 
@@ -4241,40 +2498,37 @@ func (app *application) myHandler(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-### Key Takeaways
+**Response Example**
+```bash
+HTTP/1.1 500 Internal Server Error
+Connection: close
+...
+Content-Length: 22
+Internal Server Error
+```
 
-- Panics in handlers terminate the goroutine of current request but the main goroutine still work.
-  - Default behavior without panic recovery provides empty response.
+**Note**
 
-- Create a deferred function in the middleware and set the `Connection: Close` header.
-  ```go
-  defer func() {
-      if err := recover(); err != nil {
-          w.Header().Set("Connection", "close")
-          app.serverError(w, r, fmt.Errorf("%v", err))
-      }
-  }()
-  ```
+- Panics in handlers terminate the goroutine of current request but the main goroutine still work
 
-- The middleware will only recover panics that happen in the same goroutine that executed the `recoverPanic()` middleware.
-  - Make sure to recover any panics from goroutines spinned up by your handlers too.
+---
+
+**[Example Code](https://github.com/Libra2021/snippet-box/commit/77214415f634bd228987eeba49fbfcf7c69996ae)**
 
 ## 6.5 Composable middleware chains
 
-1. **Overview**
+**`justinas/alice` Package**
 
-Introduce the `justinas/alice` package to help us manage our middleware/handler chains.
+- Helps us manage our middleware/handler chains
 
-It transforms
 ```go
+// Without alice
 Middleware1(Middleware2(Middleware3(myHandler)))
-```
-to
-```go
+
+// with alice
 alice.New(Middleware1, Middleware2, Middleware3).Then(myHandler)
 ```
-
-You can use it to create middleware chains that can be assigned to variables, appended to, and reused. For example:
+- Can be used to create middleware chains that can be assigned to variables, appended to, and reused
 
 ```go
 myChain := alice.New(myMiddlewareOne, myMiddlewareTwo)
@@ -4282,117 +2536,27 @@ myOtherChain := myChain.Append(myMiddleware3)
 return myOtherChain.Then(myHandler)
 ```
 
-2. **Implementation**
+---
 
-**File: `cmd/web/routes.go`**
-
-```go
-...
-
-// Create a middleware chain containing our 'standard' middleware
-// which will be used for every request our application receives.
-standard := alice.New(app.recoverPanic, app.logRequest, commonHeaders)
-
-// Return the 'standard' middleware chain followed by the servemux.
-return standard.Then(mux)
-
-...
-```
+**[Example Code](https://github.com/Libra2021/snippet-box/commit/aa3b0b09bd936b5b2ce330a45f460f6d87b3bd48)**
 
 # Chapter 7: Processing forms
 
-## 7.1 Setting up an HTML form
-
-**Implementation**
-
-**File: `ui/html/pages/create.tmpl`**
-
-```html
-{{define "title"}}Create a New Snippet{{end}}
-
-{{define "main"}}
-<form action='/snippet/create' method='POST'>
-    <div>
-        <label>Title:</label>
-        <input type='text' name='title'>
-    </div>
-    <div>
-        <label>Content:</label>
-        <textarea name='content'></textarea>
-    </div>
-    <div>
-        <label>Delete in:</label>
-        <input type='radio' name='expires' value='365' checked> One Year
-        <input type='radio' name='expires' value='7'> One Week
-        <input type='radio' name='expires' value='1'> One Day
-    </div>
-    <div>
-        <input type='submit' value='Publish snippet'>
-    </div>
-</form>
-{{end}}
-```
-
-**File: `ui/html/partials/nav.tmpl`**
-
-```go
-{{define "nav"}}
- <nav>
-    <a href='/'>Home</a>
-    <a href='/snippet/create'>Create snippet</a>
-</nav>
-{{end}}
-```
-
-**File: `cmd/web/handlers.go`**
-
-```go
-package main
-
-...
-
-func (app *application) snippetCreate(w http.ResponseWriter, r *http.Request) {
-    data := app.newTemplateData(r)
-
-    app.render(w, r, http.StatusOK, "create.tmpl", data)
-}
-
-...
-```
-
 ## 7.2 Parsing form data
 
-1. **Implementation**
-
-**File: `cmd/web/handlers.go`**
+**Form Handling Essentials**
 
 ```go
-package main
-
-...
-
 func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request) {
-    // First we call r.ParseForm() which adds any data in POST request bodies
-    // to the r.PostForm map. This also works in the same way for PUT and PATCH
-    // requests. If there are any errors, we use our app.ClientError() helper to 
-    // send a 400 Bad Request response to the user.
     err := r.ParseForm()
     if err != nil {
         app.clientError(w, http.StatusBadRequest)
         return
     }
 
-    // Use the r.PostForm.Get() method to retrieve the title and content
-    // from the r.PostForm map.
-    title := r.PostForm.Get("title")
-    content := r.PostForm.Get("content")
-
-    // The r.PostForm.Get() method always returns the form data as a *string*.
-    // However, we're expecting our expires value to be a number, and want to
-    // represent it in our Go code as an integer. So we need to manually convert
-    // the form data to an integer using strconv.Atoi(), and we send a 400 Bad
-    // Request response if the conversion fails.
-    expires, err := strconv.Atoi(r.PostForm.Get("expires"))
+    title := r.PostForm.Get("title")       // String value
+    content := r.PostForm.Get("content")   // String value
+    expires, err := strconv.Atoi(r.PostForm.Get("expires"))  // Convert to int
     if err != nil {
         app.clientError(w, http.StatusBadRequest)
         return
@@ -4411,120 +2575,67 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 **Key Points**
 
 - **`r.ParseForm()`**
-  - Reads `POST`/`PUT`/`PATCH` bodies into `r.PostForm`.
-  - Is dempotent (safe to call multiple times).
-  - Returns an error when there is no body, or it’s too large to process.
-    - Default 10MB size limit (except multipart forms).
+  - Parses POST/PUT/PATCH bodies into `r.PostForm`
+  - Idempotent (safe to call multiple times)
+  - Returns an error if the body is empty or too large
+  - 10MB limit (except multipart forms `enctype="multipart/form-data"`)
 
-- **`r.PostForm`**
-  - Use the `r.PostForm.Get()` method to retrieve the form data.
-    - Always returns a _string_.
-    - Use `strconv.Atoi()` to convert to an integer.
-    - Only returns the first value for a specific form field.
-  - The type is `url.Values` which has the underlying type `map[string][]string`.
+- **`r.PostForm.Get()`**
 
-2. **`r.PostFormValue()`**
-  - Shorthand for `r.PostForm.Get()`.
-  - Recommend avoiding `PostFormValue()` (silently ignores parse errors).
+  - Only returns the first value as *string*
+  - Requires manual type conversion (e.g., `strconv.Atoi()`)
 
-3. **Multiple-value Fields**
+  - The type is `url.Values` which has the underlying type `map[string][]string`
+  - **`r.PostFormValue()`** is a shorthand but it silently ignores parse errors
 
-- You **can't** use `r.PostForm.Get()` with form fields which potentially send multiple values, such as a group of checkboxes.
-  ```html
-  <input type="checkbox" name="items" value="foo"> Foo
-  <input type="checkbox" name="items" value="bar"> Bar
-  <input type="checkbox" name="items" value="baz"> Baz
-  ```
+**Advanced Handling**
 
-- Use `r.PostForm` map directly.
+- **Multiple Values**:
+
   ```go
-  for i, item := range r.PostForm["items"] {
-    fmt.Fprintf(w, "%d: Item %s\n", i, item)
+  for i, item := range r.PostForm["items"] {  // Checkboxes, multi-select
+      fmt.Fprintf(w, "%d: Item %s\n", i, item)
   }
   ```
 
-4. **Limiting Form Size**
+- **Size Limits**:
 
-- Forms submitted with a `POST` method have a size limit of 10MB of data.
-  - `enctype="application/x-www-form-urlencoded"` - 10MB limit.
-  - `enctype="multipart/form-data"` - No limit.
-
-- Use `http.MaxBytesReader()` to change the limit.
   ```go
-  r.Body = http.MaxBytesReader(w, r.Body, 4096)  // 4KB limit
-
+  r.Body = http.MaxBytesReader(w, r.Body, 4096)  // Set 4KB limit
   err := r.ParseForm()
-  if err != nil {
-      http.Error(w, "Bad Request", http.StatusBadRequest)
-      return
-  }
   ```
-  - If the limit is hit - `MaxBytesReader` will return an error and be surfaced by `r.ParseForm()`.
-  - If the limit is hit — `MaxBytesReader` sets a flag on `http.ResponseWriter` which instructs the server to close the underlying TCP connection.
 
-5. **Query String Parameters**
+- **Query Strings**:
 
-- `r.URL.Query().Get()` for `GET` requests like `/foo/bar?title=value&content=value`.
-
-6. **`r.Form`**
-
-- Contains form data from `POST` request body and any query string parameters.
-  - In the event of a conflict, the request body value will take precedent over the query string parameter.
   ```go
-  err := r.ParseForm()
-  if err != nil {
-      http.Error(w, "Bad Request", http.StatusBadRequest)
-      return
-  }
-
-  title := r.Form.Get("title")
+  search := r.URL.Query().Get("q")  // GET /search?q=foo
   ```
 
-- Can be very helpful if you want your application to be agnostic about how data values are passed to it.
+**Data Sources**
 
-- It is clearer and more explicit to read data from the `POST` request body via `r.PostForm` or from query string parameters via `r.URL.Query().Get()`.
+| Method                | Source                   | Best For             |
+| :-------------------- | :----------------------- | :------------------- |
+| `r.PostForm.Get()`    | POST body only           | Form submissions     |
+| `r.URL.Query().Get()` | URL query string         | Search/filter params |
+| `r.Form.Get()`        | POST body + query string | Mixed data (avoid)   |
 
-### Key Takeaways
+**Best Practices**
 
-- **Form Parsing**:
-  - `r.ParseForm()` reads `POST`/`PUT`/`PATCH` bodies into `r.PostForm`.
-  - Idempotent (safe to call multiple times).
-  - Default 10MB size limit (except multipart forms).
-    - Use `http.MaxBytesReader()` to change the limit.
+- Always call `r.ParseForm()` first
+- Use explicit sources (`PostForm` or `Query`)
+- Avoid `PostFormValue()` (hides parse errors)
+- Handle type conversions explicitly
+- Set size limits for security
 
-- **Data Access**:
-  - `r.PostForm.Get()` for single values (returns first value).
-  - Direct map access (`r.PostForm["items"]`) for multi-value fields.
-  - Manual type conversion for non-string data.
+---
 
-- **Best Practices**:
-  - Use `r.PostForm` for `POST` bodies.
-  - Use `r.URL.Query().Get()` for `GET` parameters.
-  - Only use `r.Form` for agnostic data access.
-  - Avoid `PostFormValue()` (silently ignores parse errors).
+[**Example Code**](https://github.com/Libra2021/snippet-box/commit/01001026914f409d7441a517134a75156706dd12)
 
 ## 7.3 Validating form data
 
-**Implementation**
-
-**File: `cmd/web/handlers.go`**
+**Form Validating Essentials**
 
 ```go
-package main
-
-import (
-    "errors"
-    "fmt"
-    "net/http"
-    "strconv"
-    "strings"      // New import
-    "unicode/utf8" // New import
-
-    "snippetbox.alexedwards.net/internal/models"
-)
-
-...
-
 func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request) {
     err := r.ParseForm()
     if err != nil {
@@ -4541,31 +2652,22 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
         return
     }
 
-    // Initialize a map to hold any validation errors for the form fields.
     fieldErrors := make(map[string]string)
 
-    // Check that the title value is not blank and is not more than 100
-    // characters long. If it fails either of those checks, add a message to the
-    // errors map using the field name as the key.
     if strings.TrimSpace(title) == "" {
         fieldErrors["title"] = "This field cannot be blank"
     } else if utf8.RuneCountInString(title) > 100 {
         fieldErrors["title"] = "This field cannot be more than 100 characters long"
     }
 
-    // Check that the Content value isn't blank.
     if strings.TrimSpace(content) == "" {
         fieldErrors["content"] = "This field cannot be blank"
     }
 
-    // Check the expires value matches one of the permitted values (1, 7 or
-    // 365).
     if expires != 1 && expires != 7 && expires != 365 {
         fieldErrors["expires"] = "This field must equal 1, 7 or 365"
     }
 
-    // If there are any errors, dump them in a plain text HTTP response and
-    // return from the handler.
     if len(fieldErrors) > 0 {
         fmt.Fprint(w, fieldErrors)
         return
@@ -4584,45 +2686,39 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 **Key Points**
 
 - **Validation**:
-  - Use `strings.TrimSpace()` to check for blank values.
-  - Use `utf8.RuneCountInString()` to check for long values.
-
+  - Use `strings.TrimSpace()` to check for blank values
+  - Use `utf8.RuneCountInString()` to check for long values
 - **Error Handling**:
-  - Use a map to store validation errors.
-  - Return the errors to the user.
+  - Use a map to store validation errors
+  - Return the errors to the user
 
-- **`utf8.RuneCountInString()` vs `len()`**
-  - `utf8.RuneCountInString()` returns the number of _runes_ in a string.
-  - `len()` returns the number of _bytes_ in a string.
-  - `utf8.RuneCountInString()` is more accurate for _non-ASCII_ characters.
-  - For example:
-    ```go
-    utf8.RuneCountInString("Hello, 世界") // 8
-    len("Hello, 世界") // 13
+**`utf8.RuneCountInString()` vs `len()`**
 
-    utf8.RuneCountInString("Zoë") // 3
-    len("Zoë") // 4
-    ```
+- `len(str)` → Byte count (O(1))
+- `utf8.RuneCountInString(str)` → Unicode character count (O(n))
 
-- You can find a bunch of code patterns for processing and validating different types of inputs in [this blog post](https://www.alexedwards.net/blog/validation-snippets-for-go).
+```go
+utf8.RuneCountInString("Hello, 世界") // 8
+len("Hello, 世界") // 13
+
+utf8.RuneCountInString("Zoë") // 3
+len("Zoë") // 4
+```
+
+**Additional Resources**
+
+- [Validation Snippets for Go](https://www.alexedwards.net/blog/validation-snippets-for-go)
+
+---
+
+[**Example Code**](https://github.com/Libra2021/snippet-box/commit/b24d0b44118297855f35166b88aa42e91c036a16)
 
 ## 7.4 Displaying errors and repopulating fields
 
-1. **Implementation**
-
-**File: `cmd/web/templates.go`**
+**Template Data Structure**
 
 ```go
-package main
-
-import (
-    "html/template"
-    "path/filepath"
-    "time"
-
-    "snippetbox.alexedwards.net/internal/models"
-)
-
+// templates.go
 // Add a Form field with the type "any".
 type templateData struct {
     CurrentYear int
@@ -4631,85 +2727,43 @@ type templateData struct {
     Form        any
 }
 
-...
-```
-
-**File: `cmd/web/handlers.go`**
-
-```go
-package main
-
-...
-
-// Define a snippetCreateForm struct to represent the form data and validation
-// errors for the form fields. Note that all the struct fields are deliberately
-// exported (i.e. start with a capital letter). This is because struct fields
-// must be exported in order to be read by the html/template package when
-// rendering the template.
+// handlers.go
 type snippetCreateForm struct {
     Title       string
     Content     string
     Expires     int
     FieldErrors map[string]string
 }
+```
 
+**Form Handling Flow**
+
+```go
+// Display form (GET)
 func (app *application) snippetCreate(w http.ResponseWriter, r *http.Request) {
     data := app.newTemplateData(r)
-
-    // Initialize a new snippetCreateForm instance and pass it to the template.
-    // Notice how this is also a great opportunity to set any default or
-    // 'initial' values for the form --- here we set the initial value for the 
-    // snippet expiry to 365 days.
-    data.Form = snippetCreateForm{
-        Expires: 365,
-    }
-
+    data.Form = snippetCreateForm{Expires: 365}  // Set defaults
     app.render(w, r, http.StatusOK, "create.tmpl", data)
 }
 
+// Process form (POST)
 func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request) {
-    err := r.ParseForm()
-    if err != nil {
-        app.clientError(w, http.StatusBadRequest)
-        return
-    }
-
-    // Get the expires value from the form as normal.
-    expires, err := strconv.Atoi(r.PostForm.Get("expires"))
-    if err != nil {
-        app.clientError(w, http.StatusBadRequest)
-        return
-    }
-
-    // Create an instance of the snippetCreateForm struct containing the values
-    // from the form and an empty map for any validation errors.
+    // Parse and validate
     form := snippetCreateForm{
-        Title:       r.PostForm.Get("title"),
-        Content:     r.PostForm.Get("content"),
-        Expires:     expires,
+        Title:   r.PostForm.Get("title"),
+        Content: r.PostForm.Get("content"),
+        Expires: expires,
         FieldErrors: map[string]string{},
     }
 
-    // Update the validation checks so that they operate on the snippetCreateForm
-    // instance.
+    // Validation
     if strings.TrimSpace(form.Title) == "" {
-        form.FieldErrors["title"] = "This field cannot be blank"
+        form.FieldErrors["title"] = "Cannot be blank"
     } else if utf8.RuneCountInString(form.Title) > 100 {
-        form.FieldErrors["title"] = "This field cannot be more than 100 characters long"
+        form.FieldErrors["title"] = "Max 100 characters"
     }
+    // ... other validations
 
-    if strings.TrimSpace(form.Content) == "" {
-        form.FieldErrors["content"] = "This field cannot be blank"
-    }
-
-    if form.Expires != 1 && form.Expires != 7 && form.Expires != 365 {
-        form.FieldErrors["expires"] = "This field must equal 1, 7 or 365"
-    }
-
-    // If there are any validation errors, then re-display the create.tmpl template,
-    // passing in the snippetCreateForm instance as dynamic data in the Form 
-    // field. Note that we use the HTTP status code 422 Unprocessable Entity 
-    // when sending the response to indicate that there was a validation error.
     if len(form.FieldErrors) > 0 {
         data := app.newTemplateData(r)
         data.Form = form
@@ -4717,177 +2771,74 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
         return
     }
 
-    // We also need to update this line to pass the data from the
-    // snippetCreateForm instance to our Insert() method.
+    // Process valid form
     id, err := app.snippets.Insert(form.Title, form.Content, form.Expires)
-    if err != nil {
-        app.serverError(w, r, err)
-        return
-    }
-
-    http.Redirect(w, r, fmt.Sprintf("/snippet/view/%d", id), http.StatusSeeOther)
+    // ... handle success/error
 }
 ```
 
-**File: `cmd/web/templates/create.tmpl`**
+**Template Implementation**
 
 ```html
-{{define "title"}}Create a New Snippet{{end}}
-
-{{define "main"}}
 <form action='/snippet/create' method='POST'>
+    <!-- Title Field -->
     <div>
         <label>Title:</label>
-        <!-- Use the `with` action to render the value of .Form.FieldErrors.title
-        if it is not empty. -->
-        {{with .Form.FieldErrors.title}}
-            <label class='error'>{{.}}</label>
-        {{end}}
-        <!-- Re-populate the title data by setting the `value` attribute. -->
+        {{with .Form.FieldErrors.title}}<label class='error'>{{.}}</label>{{end}}
         <input type='text' name='title' value='{{.Form.Title}}'>
     </div>
+
+    <!-- Content Field -->
     <div>
         <label>Content:</label>
-        <!-- Likewise render the value of .Form.FieldErrors.content if it is not
-        empty. -->
-        {{with .Form.FieldErrors.content}}
-            <label class='error'>{{.}}</label>
-        {{end}}
-        <!-- Re-populate the content data as the inner HTML of the textarea. -->
+        {{with .Form.FieldErrors.content}}<label class='error'>{{.}}</label>{{end}}
         <textarea name='content'>{{.Form.Content}}</textarea>
     </div>
+
+    <!-- Expires Field -->
     <div>
         <label>Delete in:</label>
-        <!-- And render the value of .Form.FieldErrors.expires if it is not empty. -->
-        {{with .Form.FieldErrors.expires}}
-            <label class='error'>{{.}}</label>
-        {{end}}
-        <!-- Here we use the `if` action to check if the value of the re-populated
-        expires field equals 365. If it does, then we render the `checked`
-        attribute so that the radio input is re-selected. -->
+        {{with .Form.FieldErrors.expires}}<label class='error'>{{.}}</label>{{end}}
         <input type='radio' name='expires' value='365' {{if (eq .Form.Expires 365)}}checked{{end}}> One Year
-        <!-- And we do the same for the other possible values too... -->
         <input type='radio' name='expires' value='7' {{if (eq .Form.Expires 7)}}checked{{end}}> One Week
         <input type='radio' name='expires' value='1' {{if (eq .Form.Expires 1)}}checked{{end}}> One Day
     </div>
-    <div>
-        <input type='submit' value='Publish snippet'>
-    </div>
 </form>
-{{end}}
 ```
 
 **Key Points**
 
-- All the struct fields are deliberately exported (i.e. start with a capital letter) in order to be read by the `html/template` package when rendering the template.
-  - `{{.Form.Title}}`
-- Map key names don’t have to be capitalized to access them from a template.
-  - `{{.Form.FieldErrors.title}}`
+- **Form Struct Pattern**
 
-- Use the `with` action to render the value of `Form.FieldErrors.***` if it is not empty.
-- Use the `if` action to check if the value of the re-populated `expires` field equals `365`.
+  - Combines form data + validation errors
+  - Exported fields for template access
+    - `{{.Form.Title}}`
+  - Map key names don’t have to be capitalized
+    - `{{.Form.FieldErrors.title}}`
 
-- Re-populate the data by setting the `value` attribute or the inner HTML.
+- **Initial State**
 
-- Set default or initial values for the form fields in `snippetCreate`.
-  ```go
-  data.Form = snippetCreateForm{
-      Expires: 365,
-  }
-  ```
-  - Have to initialize `data.Form` in case `{{with .Form.FieldErrors.title}}` results in an error because `Form` is `nil`.
+  - Initialize `snippetCreateForm` fields in `snippetCreate` in case `Form` is `nil`
+  - Set default values here
 
-2. **Restful Routing**
-
-- Our routes:
-  | Route pattern          | Handler           |
-  |------------------------|-------------------|
-  | GET /snippets          | snippetIndex      |
-  | GET /snippet/view/{id} | snippetView       |
-  | GET /snippets/create   | snippetCreate     |
-  | POST /snippet/create   | snippetCreatePost |
-
-- Why not:
-  | Route pattern        | Handler           |
-  |----------------------|-------------------|
-  | GET /snippets        | snippetIndex      |
-  | GET /snippets/{id}   | snippetView       |
-  | GET /snippets/create | snippetCreate     |
-  | POST /snippets       | snippetCreatePost |
-
-- **Route Overlap Risks**
-  ```go
-  GET /snippets/{id}      # Dynamic path
-  GET /snippets/create    # Static path
-  ```
-  - When IDs are non-numeric (e.g., user-generated strings or a random 6-character string), there exists a risk of a route overlap.
-  - For example, when a user creates a snippet with the ID `create`, the route `/snippets/create` will be matched by the `snippetCreate` handler.
-    - In Go 1.22+ router: Static paths (`/create`) always take precedence over dynamic patterns (`/{id}`)
-
-- **Form Submission UX Challenges**
-  ```go
-  GET /snippets/create
-  POST /snippets
-  ```
-
-  - **Form Submission Flow**:
-    - The form at `/snippets/create` submits to `POST /snippets`.
-    - When validation fails, your code renders `create.tmpl` but...
-    - The browser's address bar still shows `/snippets` because:
-      - That's the endpoint where the `POST` was sent.
-      - You're not redirecting back to `/snippets/create`.
-    - This is midleading because a `GET` request to `/snippets` renders something else.
-  
-  - **Solution**:
-    - **Redirect**
-      ```go
-      // snippetCreatePost
-      if len(form.FieldErrors) > 0 {
-          // Store form in session and redirect back
-          app.sessionManager.Put(r.Context(), "form", form)
-          http.Redirect(w, r, "/snippets/create", http.StatusSeeOther)
-          return
-      }
-      ```
-      ```go
-      // snippetCreate
-      form := app.sessionManager.Pop(r.Context(), "form").(any) // type assert
-      data := app.newTemplateData(r)
-      data.Form = form
-      app.render(w, r, http.StatusOK, "create.tmpl", data)
-      ```
-    - **Change the route**
-      ```go
-      GET /snippets/create
-      POST /snippets/create
-      ```
-
-### Key Takeaways
-
-- **Validation Flow**:
-  - Parse form data.
-  - Populate form struct.
-  - Validate fields.
-  - Return 422 with errors if invalid.
-  - Redirect on success.
-
-- **Form Repopulation**
-  - Text fields: `value` attribute.
-  - Textareas: Inner HTML.
-  - Radio buttons: `checked` attribute with `eq` comparison.
-
-- **Error Display**:
-  - Conditional display using `with`.
-
-- **Initial State**:
-  - Initialize `snippetCreateForm` fields in `snippetCreate` in case `Form` is `nil`.
-  - Set default values here.
   ```go
   data.Form = snippetCreateForm{
     Expires: 365
   }
   ```
 
-- **Route Design**:
-  - Avoid overlapping patterns.
-  - Keep URLs consistent during form submission.
+- **Validation Flow**
+
+  - Parse → Validate → Render or Process
+  - 422 status for validation errors
+  - Automatic form repopulation
+
+- **Template Techniques**
+
+  - `with` for conditional error display
+  - `value`/`checked` attributes for repopulation
+  - `eq` for comparing values
+
+---
+
+**[Example Code]**(https://github.com/Libra2021/snippet-box/commit/02843fe5cba059de2656b724b53df2f3eccbb049)
