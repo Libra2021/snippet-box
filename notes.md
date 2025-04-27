@@ -265,7 +265,7 @@ func main() {
   Date: Wed, 18 Mar 2024 11:29:23 GMT
   Content-Length: 21
   Content-Type: text/plain; charset=utf-8
-
+  
   Hello from Snippetbox
   ```
 
@@ -308,7 +308,7 @@ w.WriteHeader(404)  // Must be called before Write()
 
   ```go
   w.Write([]byte("Hello world"))
-
+  
   io.WriteString(w, "Hello world")
   fmt.Fprint(w, "Hello world")
   ```
@@ -1162,12 +1162,12 @@ func (app *application) home(w http.ResponseWriter, r *http.Request) {
   // 1. Config parsing
   addr := flag.String("addr", ":4000", "HTTP network address")
   flag.Parse()
-
+  
   // 2. Dependency setup
   app := &application{
       logger: slog.New(slog.NewTextHandler(os.Stdout, nil)),
   }
-
+  
   // 3. Server execution
   err := http.ListenAndServe(*addr, app.routes())
   ```
@@ -2841,4 +2841,139 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 
 ---
 
-**[Example Code]**(https://github.com/Libra2021/snippet-box/commit/02843fe5cba059de2656b724b53df2f3eccbb049)
+[**Example Code**](https://github.com/Libra2021/snippet-box/commit/02843fe5cba059de2656b724b53df2f3eccbb049)
+
+## 7.5 Creating validation helpers
+
+**Creating Validation Helpers**
+
+- Problem: Validating forms is repetitive
+- Solution: Create `internal/validator` package to reduce boilerplate
+
+**Adding a Validator Package**
+
+- Create:
+
+  ```bash
+  mkdir internal/validator
+  touch internal/validator/validator.go
+  ```
+
+- File content:
+
+  ```go
+  package validator
+  
+  import (
+      "slices"
+      "strings"
+      "unicode/utf8"
+  )
+  
+  type Validator struct {
+      FieldErrors map[string]string
+  }
+  
+  func (v *Validator) Valid() bool { return len(v.FieldErrors) == 0 }
+  
+  func (v *Validator) AddFieldError(key, message string) {
+      if v.FieldErrors == nil {
+          v.FieldErrors = make(map[string]string)
+      }
+      if _, exists := v.FieldErrors[key]; !exists {
+          v.FieldErrors[key] = message
+      }
+  }
+  
+  func (v *Validator) CheckField(ok bool, key, message string) {
+      if !ok {
+          v.AddFieldError(key, message)
+      }
+  }
+  
+  func NotBlank(value string) bool { return strings.TrimSpace(value) != "" }
+  
+  func MaxChars(value string, n int) bool { return utf8.RuneCountInString(value) <= n }
+  
+  func PermittedValue[T comparable](value T, permittedValues ...T) bool {
+      return slices.Contains(permittedValues, value)
+  }
+  ```
+
+- **Summary**:
+
+  - `Validator` holds `FieldErrors`
+  - `CheckField()`, `Valid()` simplify validation
+  - Helpers: `NotBlank()`, `MaxChars()`, `PermittedValue()`
+  - Lightweight but flexible
+
+**Using the Helpers**
+
+- In `cmd/web/handlers.go`:
+
+  ```go
+  type snippetCreateForm struct {
+      Title   string
+      Content string
+      Expires int
+      validator.Validator
+  }
+  ```
+
+- Validation:
+
+  ```go
+  form.CheckField(validator.NotBlank(form.Title), "title", "This field cannot be blank")
+  form.CheckField(validator.MaxChars(form.Title, 100), "title", "Cannot exceed 100 characters")
+  form.CheckField(validator.NotBlank(form.Content), "content", "This field cannot be blank")
+  form.CheckField(validator.PermittedValue(form.Expires, 1, 7, 365), "expires", "Must be 1, 7 or 365")
+  ```
+
+- On invalid form:
+
+  ```go
+  if !form.Valid() {
+      data := app.newTemplateData(r)
+      data.Form = form
+      app.render(w, r, http.StatusUnprocessableEntity, "create.tmpl", data)
+      return
+  }
+  ```
+
+**Generics**
+
+- Before Go 1.18: Duplicated functions for each type
+
+- Now:
+
+  ```go
+  func count[T comparable](v T, s []T) int {
+      count := 0
+      for _, vs := range s {
+          if v == vs {
+              count++
+          }
+      }
+      return count
+  }
+  ```
+
+- When to use:
+
+  - To remove repeated code
+  - To avoid using `any`
+
+- Avoid if:
+
+  - Code becomes unclear
+  - Simple interfaces would work
+  - Not truly necessary
+
+- Resources:
+
+  - [Go Generics Tutorial](https://go.dev/doc/tutorial/generics)
+  - [GopherCon 2021 Talk (YouTube)](https://www.youtube.com/watch?v=Pa_e9EeCdy8)
+
+------
+
+**Example Code**
