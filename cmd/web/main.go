@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/go-playground/form/v4"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
 
@@ -18,6 +19,7 @@ type application struct {
 	logger        *slog.Logger
 	snippets      *models.SnippetModel
 	templateCache map[string]*template.Template
+	formDecoder   *form.Decoder
 }
 
 func main() {
@@ -58,11 +60,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize form decoder
+	formDecoder := form.NewDecoder()
+
 	// Initialize application with dependencies
 	app := &application{
 		logger:        logger,
 		snippets:      &models.SnippetModel{DB: db},
 		templateCache: templateCache,
+		formDecoder:   formDecoder,
 	}
 
 	// Start the HTTP server

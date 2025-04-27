@@ -3,6 +3,7 @@ module snippetbox.libra.dev
 go 1.24.1
 
 require (
+	github.com/go-playground/form/v4 v4.2.1
 	github.com/jackc/pgx/v5 v5.7.3
 	github.com/joho/godotenv v1.5.1
 	github.com/justinas/alice v1.2.0

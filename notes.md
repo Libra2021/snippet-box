@@ -265,7 +265,7 @@ func main() {
   Date: Wed, 18 Mar 2024 11:29:23 GMT
   Content-Length: 21
   Content-Type: text/plain; charset=utf-8
-  
+
   Hello from Snippetbox
   ```
 
@@ -308,7 +308,7 @@ w.WriteHeader(404)  // Must be called before Write()
 
   ```go
   w.Write([]byte("Hello world"))
-  
+
   io.WriteString(w, "Hello world")
   fmt.Fprint(w, "Hello world")
   ```
@@ -1162,12 +1162,12 @@ func (app *application) home(w http.ResponseWriter, r *http.Request) {
   // 1. Config parsing
   addr := flag.String("addr", ":4000", "HTTP network address")
   flag.Parse()
-  
+
   // 2. Dependency setup
   app := &application{
       logger: slog.New(slog.NewTextHandler(os.Stdout, nil)),
   }
-  
+
   // 3. Server execution
   err := http.ListenAndServe(*addr, app.routes())
   ```
@@ -2863,19 +2863,19 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 
   ```go
   package validator
-  
+
   import (
       "slices"
       "strings"
       "unicode/utf8"
   )
-  
+
   type Validator struct {
       FieldErrors map[string]string
   }
-  
+
   func (v *Validator) Valid() bool { return len(v.FieldErrors) == 0 }
-  
+
   func (v *Validator) AddFieldError(key, message string) {
       if v.FieldErrors == nil {
           v.FieldErrors = make(map[string]string)
@@ -2884,17 +2884,17 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
           v.FieldErrors[key] = message
       }
   }
-  
+
   func (v *Validator) CheckField(ok bool, key, message string) {
       if !ok {
           v.AddFieldError(key, message)
       }
   }
-  
+
   func NotBlank(value string) bool { return strings.TrimSpace(value) != "" }
-  
+
   func MaxChars(value string, n int) bool { return utf8.RuneCountInString(value) <= n }
-  
+
   func PermittedValue[T comparable](value T, permittedValues ...T) bool {
       return slices.Contains(permittedValues, value)
   }
@@ -2916,7 +2916,7 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
       Title   string
       Content string
       Expires int
-      validator.Validator
+      validator.Validator  // Embedding field
   }
   ```
 
@@ -2976,4 +2976,91 @@ func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request
 
 ------
 
-**Example Code**
+[**Example Code**]([7.5 Creating validation helpers · Libra2021/snippet-box@01fda8c](https://github.com/Libra2021/snippet-box/commit/01fda8cdb5255db35635c7b9c60532606562eac7))
+
+## 7.6 Automatic form parsing
+
+**Automatic Form Parsing**
+
+- Problem: Manual form parsing is repetitive
+- Solution: Use [`go-playground/form`](https://github.com/go-playground/form) or [`gorilla/schema`](https://github.com/gorilla/schema) to decode form data automatically
+
+**Setup**
+
+- Install package:
+  ```bash
+  go get github.com/go-playground/form/v4@v4
+  ```
+
+- Add decoder to `application` struct:
+  ```go
+  type application struct {
+      formDecoder *form.Decoder
+  }
+
+  func main() {
+      formDecoder := form.NewDecoder()
+      app := &application{formDecoder: formDecoder}
+  }
+  ```
+
+**Using the Decoder**
+
+- Update form struct with tags:
+  ```go
+  type snippetCreateForm struct {
+      Title   string `form:"title"`
+      Content string `form:"content"`
+      Expires int    `form:"expires"`
+      validator.Validator `form:"-"`
+  }
+  ```
+
+- Decode form in handler:
+  ```go
+  err := app.formDecoder.Decode(&form, r.PostForm)
+  if err != nil {
+      app.clientError(w, http.StatusBadRequest)
+      return
+  }
+  ```
+
+**Helper Function**
+
+- Create `decodePostForm` to handle errors:
+  ```go
+  func (app *application) decodePostForm(r *http.Request, dst any) error {
+      err := r.ParseForm()
+      if err != nil {
+          return err
+      }
+
+      err = app.formDecoder.Decode(dst, r.PostForm)
+      if errors.As(err, &form.InvalidDecoderError) {
+          panic(err)
+      }
+      return err
+  }
+  ```
+
+- Simplified handler:
+  ```go
+  func (app *application) snippetCreatePost(w http.ResponseWriter, r *http.Request) {
+      var form snippetCreateForm
+      if err := app.decodePostForm(r, &form); err != nil {
+          app.clientError(w, http.StatusBadRequest)
+          return
+      }
+      // Validation and processing...
+  }
+  ```
+
+**Summary**
+
+- Struct tags map form fields automatically as well as type conversions
+- custom `decodePostForm` reduces boilerplate and handles critical errors
+- Cleaner, reusable form processing
+
+---
+
+[**Example Code**]()
